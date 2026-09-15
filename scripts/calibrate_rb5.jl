@@ -114,25 +114,63 @@ function main(args)
     folder, output, mount = args[1:3]
     mount in ("eye_to_hand", "eye_in_hand") || error("Unknown mount: $mount")
     convention_file = joinpath(folder, "convention.toml")
+    target_type = "charuco"  # Compatibility with original board-only exports.
+    reference_type = "none"
+    hand_frame = "controller_tcp"
     if isfile(convention_file)
         convention = TOML.parsefile(convention_file)
         convention["mount"] == mount || error("Mount disagrees with the exported dataset")
         convention["units"] == "metres" || error("Dataset must use metres")
+        target_type = get(convention, "target_type", "charuco")
+        target_type in ("aruco", "charuco") || error("Unknown target type")
+        reference_type = get(convention, "reference_type", "none")
+        hand_frame = get(convention, "hand_frame", "controller_tcp")
+        hand_frame in ("controller_tcp", "urdf_tip") || error("Unknown robot hand frame")
+        reference_type in ("none", "charuco") || error("Unknown reference type")
+        if reference_type == "charuco"
+            mount == "eye_to_hand" && target_type == "aruco" || error("Invalid reference/target combination")
+        end
     end
     ispath(output) && error("Output already exists; choose a new results directory")
     A = read_poses(joinpath(folder, "tag_0_cam_0_A.csv"))
     B = read_poses(joinpath(folder, "tag_0_cam_0_B.csv"))
+    reference_poses = nothing
+    if reference_type == "charuco"
+        reference_poses = read_poses(joinpath(folder, "T_camera_charuco.csv"))
+        size(reference_poses) == size(A) || error("Reference observations must match A/B row count")
+    end
     kappa = length(args) >= 4 ? parse(Float64, args[4]) : 125.0
     sigma = length(args) >= 5 ? parse(Float64, args[5]) : 0.01
     X, Y, report, errors = solve_calibration(A, B; kappa=kappa, translation_sigma_m=sigma)
     report["mount"] = mount
-    report["X"] = mount == "eye_to_hand" ? "T_tcp_board" : "T_tcp_camera"
-    report["Y"] = mount == "eye_to_hand" ? "T_base_camera" : "T_base_board"
+    report["target_type"] = target_type
+    report["reference_type"] = reference_type
+    report["hand_frame"] = hand_frame
+    target_frame = target_type == "aruco" ? "marker" : "board"
+    hand_name = hand_frame == "urdf_tip" ? "hand" : "tcp"
+    report["X"] = mount == "eye_to_hand" ? "T_" * hand_name * "_" * target_frame : "T_" * hand_name * "_camera"
+    report["Y"] = mount == "eye_to_hand" ? "T_base_camera" : "T_base_" * target_frame
+    if reference_type == "charuco"
+        report["Y"] = "T_base_charuco"
+    end
     report["transform_convention"] = "T_parent_child maps child coordinates to parent; translations in metres"
     mkpath(output)
     writedlm(joinpath(output, report["X"] * ".csv"), X, ',')
     writedlm(joinpath(output, report["Y"] * ".csv"), Y, ',')
-    if mount == "eye_to_hand"
+    if reference_type == "charuco"
+        writedlm(joinpath(output, "T_charuco_base.csv"), inv(Y), ',')
+        # Camera extrinsic is derived from Y and simultaneous reference observations.
+        # With a fixed camera and board these should agree across samples.
+        cameras = [Y * inv(reference_poses[i, :, :]) for i=1:size(A, 1)]
+        camera_R = project_rotation(sum(C[1:3, 1:3] for C in cameras))
+        camera_t = sum(C[1:3, 4] for C in cameras) / length(cameras)
+        camera = [camera_R camera_t; 0 0 0 1]
+        writedlm(joinpath(output, "T_base_camera.csv"), camera, ',')
+        writedlm(joinpath(output, "T_camera_base.csv"), inv(camera), ',')
+        report["camera_extrinsic_note"] = "Derived by averaging Y * inverse(T_camera_charuco); not an additional SDP variable"
+        report["camera_translation_scatter_rms_m"] = sqrt(sum(norm(C[1:3, 4] - camera_t)^2 for C in cameras) / length(cameras))
+        report["camera_rotation_scatter_rms_deg"] = sqrt(sum(rad2deg(acos(clamp((tr(camera_R' * C[1:3, 1:3])-1)/2, -1, 1)))^2 for C in cameras) / length(cameras))
+    elseif mount == "eye_to_hand"
         writedlm(joinpath(output, "T_camera_base.csv"), inv(Y), ',')
     end
     open(joinpath(output, "residuals.csv"), "w") do io

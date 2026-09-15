@@ -1,176 +1,183 @@
-# RB5-850 + RealSense D435if 재현 환경
+# RB5-850 + D435if: Eye-in-Hand RWHE 캘리브레이션
 
-## 구현 범위
+## 현재 변경 사항
 
-기본 구성은 **Eye-to-Hand: 카메라 고정, 보드는 로봇 TCP에 고정**입니다.
-Python으로 RGB 영상과 로봇 자세를 수집하고, 원본 Julia 코드의 목적함수와
-회전 제약식으로 `AX = YB` 문제를 풉니다. 실측 보드 크기를 사용하므로 scale=1입니다.
-단일 카메라·단일 보드 실험은 논문의 일반화 문제에 포함되는 특수한 경우입니다.
-논문의 다중 센서/타깃·미지 스케일 실험 및 전체 표 재현은 원본 `experiments/`를 사용합니다.
-새 실행기는 같은 SDP의 primal 문제를 COSMO로 풀며, 논문의 모든 실험이나 실행 시간을
-동일하게 재현했다고 주장하지 않습니다.
+배치는 **Eye-in-Hand로 확정**했습니다. 카메라는 로봇 손목에 단단히 장착하고,
+준비된 ChArUco 타겟은 작업대에서 로봇 베이스에 대해 고정합니다.
+로봇 자세 계산을 **측정 관절각 `rbpodo.sdata.jnt_ang` → URDF 순기구학 → T_base_hand**로
+변경했습니다. 공식 `rb5_850e.urdf`를 포함했으며 U 버전은 제외했습니다.
+이 구현은 URDF를 선택했으므로 MJCF/MuJoCo 설치는 필요하지 않습니다.
+메시·충돌·동역학 시뮬레이션 없이 joint origin, axis, angle, fixed joint만 계산합니다.
 
-## 1. 가상환경 없는 로컬 설치
+손목 카메라에서 관측한 ChArUco 자세를 로봇 FK와 묶어 저장합니다.
+손목-카메라 X와 베이스-타겟 Y를 동시에 추정하는 Robot-world/hand-eye 문제입니다.
 
-Ubuntu 22.04 x86_64 / Python 3.10에서 저장소 루트에서 실행합니다.
+## 1. 확정된 장치 배치
+
+- D435if는 손목에 고정하며, 수집 중 장착 위치·각도가 변하지 않아야 합니다.
+- ChArUco는 로봇 베이스에 대해 고정된 작업대에 둡니다.
+- 손목 자세를 바꾸면서 카메라가 ChArUco를 관측합니다.
+- 카메라 케이블이 장착부를 당겨 자세를 바꾸지 않도록 배치합니다.
+
+`hardware/rb5.example.json`과 `hardware/rb5.local.json`은 모두
+`mount=eye_in_hand`, `target.type=charuco`, `reference.type=none`입니다.
+`reference.type=none`은 별도의 두 번째 시각 패턴을 사용하지 않는다는 뜻이며,
+ChArUco 타겟은 `target`/`board` 설정으로 사용합니다.
+
+## 2. 좌표계와 AX=YB
+
+`T_parent_child`는 child 좌표의 점을 parent 좌표로 옮기는 4×4 변환입니다.
+모든 이동 성분은 m입니다.
+
+| 항목 | Eye-in-Hand |
+|---|---|
+| A | T_base_hand (URDF FK) |
+| B | inverse(T_camera_board) |
+| X | T_hand_camera |
+| Y | T_base_board |
+
+손목 카메라 구성은 `T_base_hand × T_hand_camera = T_base_board × T_board_camera`입니다.
+
+현재 모델의 `base=link0`, `hand=tcp`를 사용합니다. 여기서 **hand는 URDF의 tip 링크**이며,
+제어기에 현재 설정된 TCP라는 뜻이 아닙니다. 그래서 새 결과는 `T_tcp_*` 대신
+`T_hand_*`로 저장합니다. 제어기 TCP offset과 비교하려면 두 기준 프레임을 먼저 맞추세요.
+`tip_link`를 바꾸면 X의 기준도 바뀝니다.
+
+RGB 관측은 RealSense color optical frame(x 오른쪽, y 아래쪽, z 전방)입니다.
+depth/IMU/외함 좌표와 다릅니다. ChArUco 좌표는 인쇄물 좌상단 원점,
+x 오른쪽, y 아래쪽, 평면 z=0입니다. PnP는 SDK RGB 내부 파라미터를 사용하며
+현재 none/Brown-Conrady 왜곡 모델을 지원합니다.
+
+## 3. 공식 모델과 정확도
+
+- 파일: `hardware/models/rainbow/rb5_850e.urdf`
+- 출처: [Rainbow Robotics 공식 rbpodo_ros2](https://github.com/RainbowRobotics/rbpodo_ros2/blob/5e8294a985e7ce5e20e70564c2681130afc5f502/rbpodo_description/robots/rb5_850e.urdf)
+- 커밋: `5e8294a985e7ce5e20e70564c2681130afc5f502`
+- 라이선스·해시: 같은 폴더의 `LICENSE`, `provenance.json`
+- 원본 URDF는 수정하지 않았습니다. 참조하는 메시 파일은 FK에 필요하지 않아 포함하지 않았습니다.
+
+공식 non-U 모델을 준비했지만 실제 RB5-850 장비와의 일치는 아직 확인되지 않았습니다.
+사용 국가만으로 모델 버전을 판별하지 말고 명판·사양을 확인하세요.
+모델 치수, 관절 영점/부호/순서, 실제 링크 변형이 정확도에 영향을 줍니다.
+URDF 기반 계산이 마커 관측이나 제어기 모델보다 더 정확하다고 검증된 것은 아닙니다.
+
+관절 변환은 다음처럼 명시합니다.
+
+```text
+q_urdf = deg2rad(joint_signs * measured_joint_degrees + joint_offsets_deg)
+encoder 순서 = [base, shoulder, elbow, wrist1, wrist2, wrist3]
+```
+
+기본 부호는 모두 +1, offset은 모두 0도입니다. 이는 공식 joint 이름/단위에 맞춘
+초기 매핑이며, 실물 영점 검증을 대체하지 않습니다. 제어기의 `jnt_ref`나 `tcp_pos`를
+FK 입력으로 사용하지 않습니다. `tcp_pos`는 비교 자료로만 보관합니다.
+
+## 4. 설치 및 오프라인 FK 실행
+
+이전 설치의 NumPy/SciPy와 Python 표준 XML 파서로 실행됩니다. 추가 패키지나
+가상환경, ROS 실행, MuJoCo 설치가 필요하지 않습니다. 새 PC 설치는 다음과 같습니다.
 
 ```bash
 bash scripts/install_rb5_local.sh
-python3 -m hardware.rb5_realsense doctor
 ```
 
-설치 경로와 내용:
-
-- Python: `python3 -m pip install --user`, 기본 `~/.local/lib/python3.10/site-packages`.
-- Python 패키지: NumPy, SciPy, OpenCV contrib, 공식 `pyrealsense2`, 공식 `rbpodo`.
-- Julia 1.10.10: `~/.local/share/rwhe/julia-1.10.10` (공식 SHA256 검증).
-- Julia 패키지: `~/.local/share/rwhe/julia-depot`, 환경 정의는 `environments/rb5/`.
-- 설치 후 Python/Julia 검증을 수행합니다. 최초 설치는 다운로드·컴파일에 시간이 걸립니다.
-
-sudo/apt, 가상환경, ROS 설치는 사용하지 않습니다. `--user` 패키지는 같은 사용자의
-다른 Python 프로그램에서도 보이므로 버전을 `hardware/requirements-rb5.txt`에 기록했습니다.
-Julia의 의존성 해석 결과는 설치 시 `environments/rb5/Manifest.toml`에 저장됩니다.
-원본 루트 `Project.toml`에 포함된 논문용 플롯/실험 패키지는 이 실행 경로에 필요하지 않습니다.
-
-장치가 없으면 doctor의 장치 목록은 비어 있을 수 있습니다. USB 권한 문제는 Python SDK
-설치만으로 해결되지 않습니다. 실제 연결 시 권한 오류가 나면 공식
-[Linux 설치 안내](https://github.com/realsenseai/librealsense/blob/master/doc/installation.md)의
-udev 설정을 적용해야 합니다. 이 작업은 시스템 관리자 권한이 필요합니다.
-
-## 2. 좌표계와 로봇 자세
-
-`T_parent_child`는 **child 좌표의 점을 parent 좌표로 옮기는 행렬**입니다.
-예: `p_base = T_base_camera @ p_camera`. 모든 저장 행렬의 이동 성분은 m입니다.
-
-| 항목 | Eye-to-Hand 기본값 | Eye-in-Hand 선택 시 |
-|---|---|---|
-| A | T_base_tcp | T_base_tcp |
-| B | T_camera_board | inverse(T_camera_board) |
-| X 결과 | T_tcp_board | T_tcp_camera |
-| Y 결과 | T_base_camera | T_base_board |
-
-Eye-to-Hand에서는 `T_base_tcp · T_tcp_board = T_base_camera · T_camera_board`입니다.
-카메라는 RealSense **color optical frame**(x 오른쪽, y 아래, z 전방)입니다.
-depth/IMU/장치 외함 좌표와 다릅니다. depth 영상과 함께 쓰려면 SDK의 depth↔color
-내부 외부파라미터를 추가로 합성해야 합니다.
-보드 좌표는 OpenCV ChArUco 정의(평면 z=0, 인쇄물 좌상단 원점, x 오른쪽, y 아래)를 따릅니다.
-
-RB 제어기 `tcp_pos`의 `[x,y,z,Rx,Ry,Rz]`를 mm/도에서 m/회전행렬로 바꿉니다.
-회전은 **Rz(Rz) Ry(Ry) Rx(Rx)**이며 rotation vector가 아닙니다.
-TCP는 제어기에 현재 설정된 툴 기준입니다. flange라고 가정하지 마세요.
-수집 중 TCP offset, tool, user/base 설정을 바꾸지 마세요.
-실측 시작 전 doctor 출력값을 티칭 펜던트의 **베이스 기준 TCP 표시값**과 비교하세요.
-공식 SDK에는 `tcp_pos`가 일부 펌웨어에서 reference 값으로 덮어써질 수 있다는 주석이 있습니다.
-원시 TCP, 측정 관절값, 타임스탬프를 함께 기록하고 정지 상태만 수집합니다.
-
-## 3. 보드 생성과 설정
+로봇 연결 없이 주어진 각도로 FK를 계산합니다. 다음은 수학적 입력 예시이며
+실제 로봇을 이 자세로 이동시키는 명령이 아닙니다.
 
 ```bash
-cp hardware/rb5.example.json hardware/rb5.local.json
-python3 -m hardware.rb5_realsense board --output data/rb5/board
+python3 -m hardware.rb5_realsense fk --joints-deg 0 0 0 0 0 0
+python3 -m hardware.rb5_realsense fk --joints-deg 10 -20 30 0 45 -10 --output results/rb5/fk-example.json
 ```
 
-`data/rb5/board/board-print.svg`를 **100%, 페이지 맞춤 끔**으로 인쇄합니다.
-기본 ChArUco는 5×7칸, 한 칸 30mm, 마커 22mm, 패턴 전체 150×210mm입니다.
-흰 여백을 포함한 SVG 크기는 170×230mm입니다. `board.png`는 미리보기용입니다.
-평평하고 휘지 않는 판에 부착하고 실제 칸·마커 크기를 재세요.
-생성한 보드와 동일한 dictionary/칸 개수/legacyPattern=false를 사용해야 합니다.
+공식 모델의 영각 결과는 위치 `[0, -0.2074, 1.0969] m`, 회전 I입니다.
+FK 파일에는 입력 관절각, T_base_hand, URDF 경로/해시, base/tip, 관절 매핑이 기록됩니다.
 
-`hardware/rb5.local.json` 수정:
+## 5. 실측 설정
 
-- `robot.ip`: 티칭 펜던트 Setup/System에 표시된 실제 IP. PC와 통신 가능하도록 네트워크 설정.
-- `robot.tcp_description`: 현재 TCP 이름과 offset 기록.
-- `camera.serial`: 한 대이면 빈 값 가능. 여러 대이면 사용할 장치 serial 필수.
-- `board.square_length_m`, `marker_length_m`: 실측 m 값.
-- `board.dimensions_measured`: 실측 입력 후 `true`.
-- `mount`: `eye_to_hand` 기본. 손목 장착 카메라면 `eye_in_hand`.
+`hardware/rb5.local.json`에서 다음을 입력하세요. 장착 방식은 이미 반영했습니다.
 
-RGB 카메라 내부 파라미터는 실행한 스트림에서 읽고 기록합니다. 현재 구현은
-none/Brown-Conrady 왜곡 모델을 지원하며 다른 모델을 임의 변환하지 않고 오류를 냅니다.
-보드 자세는 RGB PnP로 추정하므로 depth, IMU 캘리브레이션은 필요하지 않습니다.
-정면에 가까운 평면 타깃은 PnP 모호성이 있으므로 여러 기울기를 포함해 수집하고
-저장된 `planar_hypothesis_errors_px`, 원본 영상, 최종 잔차를 함께 확인하세요.
+- `mount=eye_in_hand`: 확정된 손목 카메라 배치.
+- `target.type=charuco`, `reference.type=none`: ArUco 없는 기본 경로.
+- `robot.ip`: 실제 제어기 IP.
+- `robot.pose_source=urdf_fk`.
+- `robot.kinematics.urdf_path`: URDF 경로. 상대 경로는 저장소 루트 기준.
+- `base_link`, `tip_link`, `joint_names`, `joint_signs`, `joint_offsets_deg`: 실물과 매핑.
+- `robot.kinematics.model_matches_robot`: 모델/프레임/매핑을 확인한 후 true.
+- `board.dictionary`, `squares_x/y`, `square_length_m`, `marker_length_m`,
+  `legacy_pattern`, 필요시 `marker_ids`: 준비된 ChArUco의 실제 사양.
+- `board.dimensions_measured`: 실측 후 true.
+- `camera.serial`: 카메라 여러 대 연결 시 지정.
 
-## 4. 연결 확인과 정지 자세 수집
+보드 기본값은 DICT_4X4_50, 5×7칸, 한 칸 30mm, 내부 마커 22mm의 예시입니다.
+보유 보드 사양으로 확정된 값이 아닙니다. 칸 수는 내부 코너 개수가 아닌 전체 칸 수이며,
+미터 단위 크기와 인쇄 패턴 규칙이 일치해야 합니다.
+
+## 6. 연결 확인과 수집
 
 ```bash
 python3 -m hardware.rb5_realsense --config hardware/rb5.local.json doctor --robot
 python3 -m hardware.rb5_realsense --config hardware/rb5.local.json collect --output data/rb5/session01
 ```
 
-로봇 이동은 사용자가 티칭 펜던트로 수행합니다. 수집기는 TCP **데이터 포트 5001**을
-읽으며 로봇 이동·모드 변경 명령을 보내지 않습니다.
-장착물과 보드를 고정하고, 실시간 RGB 창을 보며 각 자세에서 멈춘 다음
-영상 창에서 Space 또는 Enter를 누릅니다. 화면 없는 환경은 `--headless`를 추가해
-터미널 Enter로 수집할 수 있습니다.
+수집기는 로봇 데이터 포트 5001을 읽습니다. 이동은 사용자가 티칭 펜던트로 수행합니다.
+프리뷰에서 ChArUco가 보이는지 확인하고 정지 후 Space/Enter로 저장, q로 종료합니다.
+화면 없는 환경은 `--headless`를 추가합니다.
+
 서로 평행하지 않은 여러 축의 회전과 위치 변화를 포함해 20–40개 자세를 수집하세요.
-보드가 영상 안에 충분히 크게 보이고, 흐림·반사·가림이 없는 자세를 사용합니다.
-같은 방향으로 평행이동만 하면 장착 위치를 결정할 수 없습니다.
-
-기본 수집 기준: 정지 확인 0.6초, TCP 변화 0.5mm/0.1도 이하, 관절 변화 0.1도 이하,
-ChArUco 코너 8개 이상, 재투영 RMS 1px 이하. 기준은 실험 품질에 따라 조절합니다.
-샘플은 하드웨어 동기화되지 않습니다. 서로 다른 장치 시간을 직접 빼지 않으며,
-정지 구간 내 로봇 측정과 새 RGB 프레임을 묶고 각 장치 시간·호스트 수신시간을 보관합니다.
-
-`q`로 종료하면 다음 형식으로 CSV를 생성합니다.
+정지 확인은 기본 0.6초, FK pose 변화 0.5mm/0.1도 이하, 측정 관절 변화 0.1도 이하입니다.
+ChArUco 최소 8코너, 재투영 RMS 1px 이하를 요구합니다. 모호한 평면 PnP는 거부합니다.
+카메라와 로봇은 하드웨어 동기화되지 않으므로 정지 구간 내 측정만 저장합니다.
 
 ```text
 session01/
-  session.json       # 설정, 카메라 내부 파라미터, 장치 정보
-  images/0000.png    # RGB 원본
-  samples/0000.json  # 원시 로봇값, 카메라 보드 자세, 품질·시간 정보
+  session.json       # 모델 해시, 기준 링크, 관절 매핑, 카메라 내부 파라미터
+  robot_model.urdf   # 해당 세션 계산에 사용한 모델 원본
+  images/0000.png
+  samples/0000.json  # T_base_hand, T_camera_target, 측정 관절각, 비교용 제어기 TCP, 시간
   combined/
     tag_0_cam_0_A.csv
     tag_0_cam_0_B.csv
     metadata.json
-    convention.toml  # Julia에서 장착 방식·단위 일치 검사
+    convention.toml  # hand_frame=urdf_tip
 ```
 
-CSV는 헤더 없이 `qw,qx,qy,qz,tx,ty,tz`; 같은 행 번호가 한 쌍입니다.
-`tag_0`은 보드 전체 한 개를 뜻하며 개별 ChArUco 마커 ID가 아닙니다.
-기존 세션을 덮어쓰지 않습니다. 중단된 세션의 완성된 JSON 샘플은 다음으로 복구합니다.
+CSV는 헤더 없는 `qw,qx,qy,qz,tx,ty,tz`, 같은 행이 같은 샘플입니다.
+중단 후에는 완성된 JSON 샘플을 새 출력 폴더로 복구할 수 있습니다.
 
 ```bash
 python3 -m hardware.rb5_realsense export data/rb5/session01 --output data/rb5/session01/recovered
 ```
 
-## 5. 논문 목적함수로 캘리브레이션
+## 7. 논문 알고리즘 실행
+
+손목 카메라 예시:
 
 ```bash
-bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined results/rb5/session01 eye_to_hand
+bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined results/rb5/session01 eye_in_hand
 ```
 
-새 결과 폴더에 `T_base_camera.csv`, `T_camera_base.csv`, `T_tcp_board.csv`,
-`residuals.csv`, `report.toml`을 저장합니다. 각 변환은 4×4입니다.
-가중치는 기본 κ=125, translation σ=0.01m이며 마지막 두 인자로 조절할 수 있습니다.
-이는 시작값이며 해당 장비에서 측정한 잡음 표준편차라고 가정하지 않습니다.
-입력 자세를 바꾸어 최종 정확도를 확인하는 별도 검증 데이터도 수집하세요.
+입력의 배치 metadata와 마지막 인자가 다르면 오류를 냅니다.
+결과는 `T_hand_camera.csv`, `T_base_board.csv`로 저장되며 `residuals.csv`, `report.toml`에
+잔차와 수치적 최적성 검사가 포함됩니다.
 
-`report.toml`은 SDP 제약 위반, lifted matrix의 rank 지표, dual slack 고유값,
-primal 비용과 보수적으로 보정한 dual 하한 사이의 차이를 제공합니다.
-`numerically_certified=true`는 선택한 목적함수의 전역 최적성에 대한 부동소수점
-허용오차 내 증거입니다. 물리적 캘리브레이션 정확도 또는 엄밀한 산술 증명은 아닙니다.
-false이면 추정 행렬은 참고용이며, 이를 전역 최적해로 보고하면 안 됩니다.
+원본 목적함수와 SO(3) 제약식을 그대로 사용합니다. 기본 가중치 κ=125, translation
+σ=0.01m는 시작값이며 장비에서 측정한 잡음값이 아닙니다. 필요하면 마지막 두 인자로 조절합니다.
+`numerically_certified=true`는 주어진 입력/목적함수의 수치적 전역 최적성 증거입니다.
+틀린 URDF/단위/프레임이나 실제 캘리브레이션 정확도를 보증하지 않습니다.
 
-## 6. 하드웨어 없이 검증
+## 8. 검증
 
 ```bash
 python3 -m unittest discover -s tests -v
 bash scripts/julia_rb5.sh tests/rb5_solver.jl
-python3 -m hardware.rb5_realsense synthetic --output data/rb5/synthetic01
-bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/synthetic01/combined results/rb5/synthetic01 eye_to_hand
+python3 -m hardware.rb5_realsense synthetic --output data/rb5/fk-demo
+bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/fk-demo/combined results/rb5/fk-demo eye_in_hand
 ```
 
-합성 데이터는 알려진 X/Y로 `AX=YB`를 생성한 대수 검증용이며 실제 로봇 이동 경로가 아닙니다.
-Python 테스트는 단위·회전 순서·두 장착 방식·CSV 대응·정지/타임아웃 처리·보드 자세를 검증합니다.
-Julia 테스트는 원본 제약식, 무잡음 복원, 잡음 입력, 비용 하한, 관측 불가능한 입력 거부를 검증합니다.
+합성 A는 URDF FK로 계산합니다. B는 알려진 X/Y에서 생성하므로 대수 검증용이며
+카메라의 실제 가시성이나 로봇 이동 가능 경로를 나타내지 않습니다.
+Python 테스트는 공식 모델 영각/기준 회전, 관절 매핑, joint origin/axis/fixed link,
+측정 관절 사용, 기존 데이터 호환성을 확인합니다. 이 PC에 이미 설치된 Orocos KDL과
+50개 관절 자세를 독립 비교했습니다. KDL이 없는 PC에서는 해당 비교만 skip됩니다.
 
-## 근거 문서
-
-- 첨부 논문 v2: 식 (6)–(10), known-scale QCQP와 SDP relaxation.
-- [원본 논문](https://arxiv.org/abs/2507.23045)
-- [Rainbow 공식 rbpodo SDK](https://github.com/RainbowRobotics/rbpodo)
-- [RB5-850 공식 ZYX 회전 예제](https://rainbowrobotics.github.io/rb_cobot_docs/ko/technical_docs/analytic_inverse_kinematics)
-- [Rainbow TCP 데이터 정의](https://github.com/RainbowRobotics/rbpodo/blob/main/include/rbpodo/data_type.hpp)
-- [RealSense 공식 SDK 및 D435if 지원](https://github.com/realsenseai/librealsense)
-- [OpenCV ChArUco 검출](https://docs.opencv.org/4.11.0/df/d4a/tutorial_charuco_detection.html)
+이전 ArUco 구현은 과거 데이터 재현용으로 남아 있지만 현재 기본 설정/수집에는 쓰지 않습니다.

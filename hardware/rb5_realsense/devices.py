@@ -8,6 +8,14 @@ from .geometry import rb_pose_to_transform, pose_distance
 class RobotReader:
     def __init__(self, config):
         import rbpodo
+        self.fk = None
+        source = config.get("pose_source", "controller_tcp")
+        if source == "urdf_fk":
+            from .kinematics import RB5Kinematics
+            self.fk = RB5Kinematics(config["kinematics"])
+        elif source != "controller_tcp":
+            raise ValueError("robot.pose_source must be urdf_fk or controller_tcp")
+        self.metadata = self.fk.metadata if self.fk else {"pose_source": "controller_tcp"}
         if not config["ip"]:
             raise ValueError("Set robot.ip in your local configuration")
         self.timeout = config["timeout_s"]
@@ -36,8 +44,10 @@ class RobotReader:
         joints = np.asarray(state.jnt_ang, dtype=float).reshape(6).copy()
         if not np.isfinite(joints).all():
             raise ValueError("Non-finite joint feedback")
-        T = rb_pose_to_transform(pose)
-        return {"T": T, "tcp_mm_deg": pose.tolist(), "joints_deg": joints.tolist(),
+        T = self.fk.forward_degrees(joints) if self.fk else rb_pose_to_transform(pose)
+        return {"T": T, "tcp_mm_deg": pose.tolist() if np.isfinite(pose).all() else None,
+                "joints_deg": joints.tolist(),
+                "pose_source": "urdf_fk" if self.fk else "controller_tcp",
                 "controller_time_s": controller_time, "request_start_monotonic_s": started,
                 "received_monotonic_s": time.monotonic()}
 

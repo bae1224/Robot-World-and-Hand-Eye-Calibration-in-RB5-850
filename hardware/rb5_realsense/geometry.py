@@ -38,9 +38,15 @@ def inverse(T):
     return out
 
 
-def measurement_pair(T_base_tcp, T_camera_board, mount):
+def measurement_pair(T_base_tcp, T_camera_target, mount, T_camera_reference=None):
     A = validate_transform(T_base_tcp)
-    C = validate_transform(T_camera_board)
+    C = validate_transform(T_camera_target)
+    if T_camera_reference is not None:
+        if mount != "eye_to_hand":
+            raise ValueError("A separate fixed ChArUco reference requires eye_to_hand")
+        # Both observations must come from the same image:
+        # A=T_base_tcp, B=T_charuco_marker, X=T_tcp_marker, Y=T_base_charuco.
+        return A, inverse(T_camera_reference) @ C
     if mount == "eye_to_hand":
         # A X = Y B: X=T_tcp_board, Y=T_base_camera.
         return A, C
