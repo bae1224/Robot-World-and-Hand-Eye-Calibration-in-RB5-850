@@ -2,9 +2,9 @@
 
 ## RB5-850 + RealSense D435if: Eye-in-Hand RWHE 캘리브레이션
 
-**카메라는 로봇 손목에 장착하고, ChArUco 타겟은 로봇 베이스에 대해 고정합니다.**
+카메라는 로봇 손목에 장착하고, ChArUco 타겟은 로봇 베이스에 대해 고정합니다.
 기본·로컬 설정은 `mount=eye_in_hand`입니다.
-로봇 자세는 **측정 관절각 `jnt_ang` + 공식 `rb5_850e.urdf`**로 계산합니다.
+로봇 자세는 측정 관절각 `jnt_ang` + 공식 `rb5_850e.urdf`로 계산합니다.
 U 버전 모델은 포함하지 않습니다. ArUco를 사용하는 구성은 기본 경로에서 제외했습니다.
 [한국어 실행 안내](docs/RB5_D435if_KO.md) · [검증 기록](docs/RB5_VALIDATION.md)
 
@@ -32,9 +32,9 @@ python3 -m hardware.rb5_realsense --config hardware/rb5.local.json collect --out
 bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined results/rb5/session01 eye_in_hand
 ```
 
-결과는 `T_hand_camera.csv`, `T_base_board.csv`, `residuals.csv`, `report.toml`입니다.
+결과 확인: `T_hand_camera.csv`, `T_base_board.csv`, `residuals.csv`, `report.toml`
 
-새 PC의 사용자 영역 설치:
+다른 노트북이나 pc 환경 에서 사용자 영역 설치:
 
 ```bash
 bash scripts/install_rb5_local.sh
