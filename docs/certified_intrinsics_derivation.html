@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Certifiable Joint Intrinsic-Extrinsic RWHEC</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<style>
+@page { size: A4; margin: 19mm 17mm 17mm 17mm; }
+html { font-size: 10.5pt; }
+body {
+  font-family: Georgia, "Malgun Gothic", serif;
+  line-height: 1.62; color: #16181d; margin: 0;
+  text-align: justify; word-break: keep-all;
+}
+h1 { font-size: 1.62rem; line-height: 1.3; margin: 0 0 .15em; letter-spacing: -.01em; }
+.sub { font-size: .95rem; color: #4a5160; margin: 0 0 .2em; }
+.meta { font-size: .8rem; color: #6b7280; margin: 0 0 1.6em; font-family: "Segoe UI", sans-serif; }
+h2 {
+  font-size: 1.1rem; margin: 1.9em 0 .55em; padding-bottom: .22em;
+  border-bottom: 1.5px solid #c8ccd4; break-after: avoid;
+}
+h3 { font-size: .98rem; margin: 1.35em 0 .4em; break-after: avoid; }
+p { margin: .55em 0; }
+.lead { font-size: .97rem; color: #333842; border-left: 3px solid #b9c0cc;
+        padding: .1em 0 .1em .9em; margin: 1.2em 0 1.6em; text-align: left; }
+.box {
+  border: 1px solid #ccd1da; border-left: 3px solid #2f4a7a;
+  background: #f7f9fc; padding: .7em .95em; margin: 1em 0;
+  break-inside: avoid;
+}
+.box .tag { font-family: "Segoe UI", sans-serif; font-weight: 700;
+            font-size: .82rem; color: #2f4a7a; letter-spacing: .02em; }
+.box p:first-of-type { margin-top: .25em; }
+.box p:last-child { margin-bottom: .1em; }
+.proof { margin: .7em 0 1.1em; padding-left: .9em; border-left: 2px solid #dde1e8;
+         font-size: .96rem; }
+.proof .tag { font-style: italic; color: #555c68; }
+.qed { float: right; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .88rem;
+        font-family: "Segoe UI", sans-serif; break-inside: avoid; }
+th, td { border-bottom: 1px solid #dde1e8; padding: .34em .5em; text-align: right; }
+th { border-bottom: 1.5px solid #9aa2b1; font-weight: 600; background: #f4f6f9; }
+th:first-child, td:first-child { text-align: left; }
+caption { caption-side: bottom; font-size: .8rem; color: #6b7280; padding-top: .45em;
+          text-align: left; font-family: "Segoe UI", sans-serif; }
+code, .mono { font-family: Consolas, "Courier New", monospace; font-size: .88em;
+              background: #f1f3f7; padding: .06em .3em; border-radius: 2px; }
+pre { background: #f6f7fa; border: 1px solid #e2e5eb; border-left: 3px solid #9aa2b1;
+      padding: .6em .8em; font-family: Consolas, monospace; font-size: .8rem;
+      line-height: 1.45; overflow-x: hidden; white-space: pre-wrap; break-inside: avoid; }
+.katex-display { margin: .75em 0; }
+.katex { font-size: 1.02em; }
+ul, ol { margin: .5em 0; padding-left: 1.4em; }
+li { margin: .25em 0; }
+.small { font-size: .88rem; color: #4a5160; }
+.warn { border-left-color: #a8501f; }
+.warn .tag { color: #a8501f; }
+.key { border-left-color: #1d6b3f; background: #f5faf6; }
+.key .tag { color: #1d6b3f; }
+hr.sep { border: none; border-top: 1px solid #dde1e8; margin: 2em 0; }
+.refs { font-size: .86rem; }
+.refs li { margin: .35em 0; }
+.pagebreak { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1>내부 파라미터까지 인증 가능한<br>Robot-World / Hand-Eye 캘리브레이션</h1>
+<p class="sub">Certifiable Joint Intrinsic–Extrinsic RWHEC: 수학적 정식화와 유도</p>
+<p class="meta">
+RB5-850 + GoPro HERO13 + HDMI capture box &nbsp;·&nbsp; 2026-09-17<br>
+저장소 <span class="mono">bae1224/Robot-World-and-Hand-Eye-Calibration-in-RB5-850</span>,
+브랜치 <span class="mono">gopro-hero13-capture</span><br>
+수치 재현: <span class="mono">experiments/radial_identifiability.py</span>
+</p>
+
+<p class="lead">
+Wise et al. (2025)는 generalized RWHEC에 대해 전역 최적성을 <em>인증</em>하는 최초의 해법을
+제시하면서, 카메라 내부 파라미터 추정은 명시적으로 범위 밖에 둔다
+(&ldquo;<span lang="en">outside the scope of this work</span>&rdquo;, §2.1).
+이 문서는 그 빈칸을 메우기 위한 정식화를 유도한다. 핵심은 재투영 잔차를
+<strong>방사 방향(radial)</strong>과 <strong>접선 방향(tangential)</strong>으로 분해하면
+후자가 초점거리와 방사 왜곡 프로파일 전체에 <em>무관</em>하면서 자세에 <em>선형</em>이라는
+점이다. 이로부터 QCQP 구조가 보존되고, 논문의 SDP·쌍대 인증서 기계가 그대로 적용된다.
+대가는 정확히 1자유도이며, 그 자유도가 무엇인지 닫힌 형식으로 특정하고(정리 4),
+그것이 곧 초점거리가 공급하는 자유도임을 보인다(§6).
+</p>
+
+<h2>1. 표기와 문제 설정</h2>
+
+<p>
+강체 변환 <span class="mono">T_parent_child</span>는 child 좌표의 점을 parent 좌표로 옮긴다.
+<span class="katex-inline">$T = \begin{bmatrix} R &amp; t \\ 0 &amp; 1\end{bmatrix} \in \mathrm{SE}(3)$</span>,
+<span class="katex-inline">$R \in \mathrm{SO}(3)$</span>,
+<span class="katex-inline">$t \in \mathbb{R}^3$</span>.
+표준 기저를 <span class="katex-inline">$e_1, e_2, e_3$</span>로 쓴다.
+</p>
+
+<p>Eye-in-hand 배치에서 <span class="katex-inline">$i$</span>번째 자세의 측정은</p>
+
+$$A_i X = Y B_i, \qquad i = 1, \dots, N,$$
+
+<p>
+여기서 <span class="katex-inline">$A_i = T_{\text{base}\leftarrow\text{hand},i}$</span>
+(관절각 + URDF 순기구학),
+<span class="katex-inline">$B_i = T_{\text{board}\leftarrow\text{camera},i}$</span>,
+<span class="katex-inline">$X = T_{\text{hand}\leftarrow\text{camera}}$</span>,
+<span class="katex-inline">$Y = T_{\text{base}\leftarrow\text{board}}$</span>이다.
+이 관계에서 카메라–보드 자세는
+</p>
+
+$$T_{\text{cb},i} \;=\; B_i^{-1} \;=\; X^{-1} A_i^{-1} Y. \tag{1}$$
+
+<h3>1.1 논문의 QCQP와 인증서</h3>
+
+<p>
+논문 Problem 1은 <span class="katex-inline">$B_i$</span>의 회전에 Langevin,
+병진에 등방 Gaussian을 가정한 MLE이며, 동차화 변수
+<span class="katex-inline">$s^2 = 1$</span>과 함께 2차 목적함수가 된다.
+</p>
+
+$$J_R = \tfrac{1}{2}\sum_i \kappa_i \big\| \bar R_{A_i} R_X - R_Y \tilde R_{B_i} \big\|_F^2, \qquad
+  J_t = \tfrac{1}{2}\sum_i \tfrac{1}{\sigma_i^2} \big\| \bar R_{A_i} t_X + s\,\bar t_{A_i} - t_Y - R_Y \tilde t_{B_i} \big\|_2^2 .$$
+
+<p>
+상태벡터는 <span class="katex-inline">$x = [\,t_X;\, t_Y;\, \mathrm{vec}(R_X);\, \mathrm{vec}(R_Y);\, s\,] \in \mathbb{R}^{25}$</span>이고,
+<span class="katex-inline">$\mathrm{SO}(3)$</span> 제약은 논문 식 (19)의 중복 2차식
+<span class="katex-inline">$RR^\top = I$</span>, <span class="katex-inline">$R^\top R = I$</span>,
+<span class="katex-inline">$R_{\sigma(1)} \times R_{\sigma(2)} = R_{\sigma(3)}$</span>로 표현된다.
+결과는 표준형 QCQP다.
+</p>
+
+$$\min_{x}\; x^\top Q(\theta) x \quad \text{s.t.}\quad x^\top C_j x = b_j,\; j = 1,\dots,m, \tag{2}$$
+
+<p>
+<span class="katex-inline">$\theta = \mathrm{vec}(\{A_i, B_i\})$</span>는 측정 데이터다.
+병진을 Schur 보완으로 소거하면 <span class="katex-inline">$19 \times 19$</span> 회전 전용
+비용이 남고, Shor 완화가 SDP를 준다. 쌍대 잉여
+<span class="katex-inline">$S(\lambda) = Q - \sum_j \lambda_j C_j \succeq 0$</span>와
+반올림한 해의 비용이 쌍대 하한과 일치하면 전역 최적성이 인증된다.
+</p>
+
+<div class="box warn">
+<span class="tag">인증서가 답하는 것과 답하지 않는 것</span>
+<p>
+인증서는 &ldquo;주어진 <span class="katex-inline">$\theta$</span>에 대해
+<span class="katex-inline">$\hat x$</span>가 (2)의 전역 최소점인가&rdquo;에 답한다.
+<span class="katex-inline">$\theta$</span> <em>자체</em>가 틀린 내부 파라미터로 만들어졌는지는
+묻지 않는다. 이 문서 전체에서 <strong>최적성(optimality)</strong>과
+<strong>정확도(accuracy)</strong>를 분리해서 다룬다. §7과 §8이 각각에 대응한다.
+</p>
+</div>
+
+<h2>2. 왜 재투영 오차는 QCQP를 깨는가</h2>
+
+<p>
+내부 파라미터를 추정하려면 자세가 아니라 픽셀을 목적함수에 넣어야 한다.
+보드 좌표의 점 <span class="katex-inline">$p_j$</span>, 관측 픽셀
+<span class="katex-inline">$u_{ij}$</span>에 대해
+</p>
+
+$$r^{\text{full}}_{ij} \;=\; \pi_K\big( T_{\text{cb},i}\, p_j \big) - u_{ij},
+\qquad
+\pi_K(P) = \begin{bmatrix} f_x P_x / P_z + c_x \\ f_y P_y / P_z + c_y \end{bmatrix}.$$
+
+<p>세 곳에서 구조가 깨진다.</p>
+
+<ol>
+<li><strong>(O1) 깊이로 나눔.</strong> <span class="katex-inline">$\pi_K$</span>는 유리함수이며 다항식이 아니다.</li>
+<li><strong>(O2) 미지수끼리의 곱.</strong> 분모를 없애도
+  <span class="katex-inline">$f_x (R_c p + t_c)_x$</span> 형태가 남아 내부 파라미터와 외부 파라미터가 쌍선형으로 얽힌다.
+  방사 왜곡을 넣으면 차수가 더 오른다.</li>
+<li><strong>(O3) 자세 자체가 곱.</strong> 식 (1)에서
+  <span class="katex-inline">$T_{\text{cb},i}$</span>는 미지수 두 개
+  <span class="katex-inline">$X^{-1}$</span>, <span class="katex-inline">$Y$</span>의 곱이다.</li>
+</ol>
+
+<p>
+(O3)만이라면 논문이 이미 해결한 문제다 — 식 (2)의 2차 항으로 흡수된다.
+문제는 (O1)과 (O2), 즉 <strong>내부 파라미터가 들어오는 순간</strong> 발생한다.
+논문이 이 문제를 범위 밖에 둔 것은 바로 이 때문이다.
+</p>
+
+<h2>3. 방사 대칭 카메라의 방향 불변식</h2>
+
+<p>
+주점을 <span class="katex-inline">$c \in \mathbb{R}^2$</span>라 하고
+<span class="katex-inline">$\bar u := u - c$</span>로 둔다.
+</p>
+
+<div class="box">
+<span class="tag">정의 1 (방사 대칭 중심 카메라)</span>
+<p>
+카메라가 <em>방사 대칭</em>이라 함은, 광심이 원점이고 광축이
+<span class="katex-inline">$e_3$</span>일 때, 점
+<span class="katex-inline">$P = (P_x, P_y, P_z)$</span>의 상이
+</p>
+$$u \;=\; c \;+\; \rho(\vartheta)\,\frac{(P_x, P_y)}{\|(P_x,P_y)\|},
+\qquad \vartheta = \operatorname{atan2}\big(\|(P_x,P_y)\|,\, P_z\big)$$
+<p>
+형태로 쓰이고 <span class="katex-inline">$\rho(\vartheta) &gt; 0$</span>인 경우를 말한다.
+<span class="katex-inline">$\rho$</span>의 <em>형태는 임의</em>다.
+</p>
+</div>
+
+<p>
+정의 1은 실제로 쓰이는 모델을 전부 포함한다:
+pinhole <span class="katex-inline">$\rho = f\tan\vartheta$</span>,
+Brown-Conrady의 방사 항,
+Kannala-Brandt 등거리
+<span class="katex-inline">$\rho = f(\vartheta + k_1\vartheta^3 + \cdots)$</span>,
+Fitzgibbon division model, 그리고 <strong>형태를 모르는 임의의 단조 프로파일</strong>까지.
+</p>
+
+<div class="box key">
+<span class="tag">명제 2 (초점거리·왜곡 무관 제약)</span>
+<p>
+정의 1의 카메라에서, 임의의 <span class="katex-inline">$\rho$</span>에 대해
+</p>
+$$\bar u \;\parallel\; (P_x, P_y)
+\qquad\Longleftrightarrow\qquad
+\bar u_x P_y - \bar u_y P_x = 0. \tag{3}$$
+<p>
+즉 <span class="katex-inline">$\bar u$</span>의 <strong>방향</strong>은
+<span class="katex-inline">$f$</span>에도, <span class="katex-inline">$\rho$</span>의
+형태에도 의존하지 않는다. 크기
+<span class="katex-inline">$\|\bar u\| = \rho(\vartheta)$</span>만 의존한다.
+</p>
+</div>
+
+<div class="proof">
+<span class="tag">증명.</span>
+정의에 의해 <span class="katex-inline">$\bar u = \rho(\vartheta)\,(P_x,P_y)/\|(P_x,P_y)\|$</span>이고
+<span class="katex-inline">$\rho &gt; 0$</span>이므로 <span class="katex-inline">$\bar u$</span>는
+<span class="katex-inline">$(P_x,P_y)$</span>의 양의 스칼라배다. 2차원 벡터의 외적이 0이라는 것이
+평행과 동치이므로 (3)을 얻는다. <span class="qed">∎</span>
+</div>
+
+<p>
+(3)은 1D radial camera 모델로 알려져 있다 (Thirthala &amp; Pollefeys 2005).
+결정적인 성질은 다음이다: <span class="katex-inline">$P = R_c p + t_c$</span>가 자세에
+<strong>선형</strong>이므로, (3)의 좌변도 자세에 선형이고, 제곱하면 2차다.
+<strong>QCQP가 보존된다.</strong>
+</p>
+
+<h2>4. RWHEC 루프에서의 방사 잔차</h2>
+
+<p>식 (1)을 전개한다. <span class="katex-inline">$X^{-1} = [R_X^\top,\, -R_X^\top t_X]$</span>,
+<span class="katex-inline">$A_i^{-1} = [R_{A_i}^\top,\, -R_{A_i}^\top t_{A_i}]$</span>이므로</p>
+
+$$T_{\text{cb},i} \;=\; \Big[\, R_X^\top R_{A_i}^\top R_Y \;\Big|\;
+   R_X^\top\big(R_{A_i}^\top (t_Y - t_{A_i}) - t_X\big) \Big],$$
+
+<p>따라서 보드 점 <span class="katex-inline">$p_j$</span>의 카메라 좌표는</p>
+
+$$\boxed{\;P_{ij} \;=\; R_X^\top\, q_{ij}, \qquad
+  q_{ij} \;:=\; R_{A_i}^\top\big(R_Y p_j + t_Y - t_{A_i}\big) - t_X. \;} \tag{4}$$
+
+<p>
+<span class="katex-inline">$q_{ij}$</span>는 <span class="katex-inline">$(R_Y, t_Y, t_X)$</span>에
+<strong>아핀(1차)</strong>이다. <span class="katex-inline">$A_i$</span>와
+<span class="katex-inline">$p_j$</span>는 알려진 상수다.
+</p>
+
+<h3>4.1 왼쪽 회전으로 차수를 낮추기</h3>
+
+<p>
+(3)의 좌변을 3차원으로 올려 쓰자.
+<span class="katex-inline">$w_{ij} := (-\bar u_{ij,y},\, \bar u_{ij,x},\, 0)^\top \in \mathbb{R}^3$</span>는
+<strong>알려진 상수 벡터</strong>이고, <span class="katex-inline">$w_{ij}^\top P = \bar u_x P_y - \bar u_y P_x$</span>이다.
+(4)를 대입하면
+</p>
+
+$$r_{ij} \;=\; w_{ij}^\top P_{ij} \;=\; w_{ij}^\top R_X^\top q_{ij}
+   \;=\; \big(R_X w_{ij}\big)^{\!\top} q_{ij}. \tag{5}$$
+
+<p>
+<span class="katex-inline">$R_X$</span>를 <span class="katex-inline">$w_{ij}$</span> 쪽으로
+옮긴 것이 요점이다. 이제 (5)는 <span class="katex-inline">$R_X$</span>에 대해 1차,
+<span class="katex-inline">$(R_Y, t_Y, t_X)$</span>에 대해 1차인 <strong>쌍선형</strong>이다.
+</p>
+
+<div class="box">
+<span class="tag">보조정리 3 (차수)</span>
+<p>
+<span class="katex-inline">$x = [\,\mathrm{vec}(R_X);\, \mathrm{vec}(R_Y);\, t_X;\, t_Y;\, s\,] \in \mathbb{R}^{25}$</span>에 대해
+<span class="katex-inline">$r_{ij}(x)$</span>는 동차 2차형식이고,
+<span class="katex-inline">$r_{ij}^2$</span>는 4차다.
+</p>
+</div>
+
+<p>
+4차이므로 그대로는 QCQP가 아니다. 되돌리는 방법이 두 가지 있다.
+</p>
+
+<h3>4.2 경로 A: 스칼라 리프팅</h3>
+
+<p>관측마다 스칼라 <span class="katex-inline">$z_{ij}$</span>를 도입한다.</p>
+
+$$\begin{aligned}
+\min_{x,\,z} \quad & \sum_{i,j} \lambda_{ij}\, z_{ij}^2 \\
+\text{s.t.} \quad & z_{ij} \;=\; \big(R_X w_{ij}\big)^{\!\top} q_{ij}(R_Y, t_Y, t_X)
+  && \text{(2차 등식)} \\
+& R_X, R_Y \in \mathrm{SO}(3) && \text{(논문 식 19)}
+\end{aligned} \tag{6}$$
+
+<p>
+목적함수 2차, 제약 2차 &rArr; <strong>QCQP 복귀</strong>.
+논문 Theorem 6은 &ldquo;제약된 변수가 <span class="katex-inline">$\mathrm{SO}(3)$</span> 또는
+<span class="katex-inline">$\mathrm{SE}(3)$</span>뿐인 임의의 QCQP&rdquo;에 ACQ가 성립함을 보이는데,
+추가 변수 <span class="katex-inline">$z$</span>는 <em>무제약</em>이므로 그 Jacobian rank 논증을
+해치지 않는다.
+</p>
+
+<p>
+규모가 문제다. 30뷰 &times; 70코너면 <span class="katex-inline">$z$</span>가 2100개다.
+그러나 희소성 패턴이 <strong>화살촉(arrowhead)</strong> 구조다: 각
+<span class="katex-inline">$z_{ij}$</span>는 자기 자신의 등식 하나에만 나타나므로
+<span class="katex-inline">$25\times 25$</span> 코어에 크기 26짜리 clique 2100개가 붙는다.
+이는 chordal이므로 COSMO의 chordal decomposition이 정확히 이 경우를 처리한다.
+</p>
+
+<h3>4.3 경로 B: 2차 모멘트 완화 (권장)</h3>
+
+<p>
+리프팅 대신 <span class="katex-inline">$\sum \lambda_{ij} r_{ij}(x)^2$</span>를 4차 다항식
+최적화(POP)로 보고 Lasserre 계층의 2차를 쓴다. 목적함수가 동차이므로 모멘트 행렬은
+25개 변수의 2차 단항식으로 색인되고, 그 크기는
+</p>
+
+$$\binom{25 + 1}{2} = 325,$$
+
+<p>
+이며 2차 제약의 localizing 행렬은 <span class="katex-inline">$26 \times 26$</span>이다.
+<span class="katex-inline">$325 \times 325$</span> SDP는 가볍다. 경로 A의 2125차원보다 훨씬 낫다.
+어떤 중복 제약이 tightness에 필요한지는 Dümbgen et al.의 AutoTight/AutoTemplate로
+자동 탐색하는 것이 실용적이다.
+</p>
+
+<h2>5. 주 결과: 정확한 게이지 불변성</h2>
+
+<p>
+(3)은 <span class="katex-inline">$(P_x, P_y)$</span>만 보고
+<span class="katex-inline">$P_z$</span>를 전혀 보지 않는다. 이 사실이 RWHEC 루프에서
+무엇을 뜻하는지가 다음이다.
+<span class="katex-inline">$T_z(\delta) := \left[\begin{smallmatrix} I &amp; \delta e_3 \\ 0 &amp; 1\end{smallmatrix}\right]$</span>로 쓴다.
+</p>
+
+<div class="box key">
+<span class="tag">정리 4 (게이지 불변성)</span>
+<p>
+임의의 <span class="katex-inline">$\delta \in \mathbb{R}$</span>에 대해,
+방사 잔차 (5)는
+</p>
+$$X \;\longmapsto\; X\, T_z(\delta)$$
+<p>
+에 대해 <strong>정확히 불변</strong>이다. 즉
+<span class="katex-inline">$r_{ij}(X T_z(\delta), Y) = r_{ij}(X, Y)$</span>가
+모든 <span class="katex-inline">$i, j$</span>에서 성립한다.
+</p>
+</div>
+
+<div class="proof">
+<span class="tag">증명.</span>
+<span class="katex-inline">$(X T_z(\delta))^{-1} = T_z(\delta)^{-1} X^{-1} = T_z(-\delta) X^{-1}$</span>이므로,
+식 (1)에서
+$$T_{\text{cb},i}\big(X T_z(\delta),\, Y\big) \;=\; T_z(-\delta)\, X^{-1} A_i^{-1} Y
+  \;=\; T_z(-\delta)\, T_{\text{cb},i}(X, Y).$$
+따라서 <span class="katex-inline">$P_{ij} \mapsto P_{ij} - \delta e_3$</span>이다.
+<span class="katex-inline">$w_{ij}$</span>의 세 번째 성분이 0이므로
+$$r_{ij} \;\mapsto\; w_{ij}^\top (P_{ij} - \delta e_3) \;=\; w_{ij}^\top P_{ij} - \delta\, w_{ij,3}
+  \;=\; w_{ij}^\top P_{ij} \;=\; r_{ij}. \qquad \square$$
+</div>
+
+<div class="box">
+<span class="tag">따름정리 5 (불가관측 방향의 특정)</span>
+<p>
+<span class="katex-inline">$X T_z(\delta) = [\,R_X \;|\; t_X + \delta R_X e_3\,]$</span>이므로,
+불가관측 방향은
+</p>
+<ul>
+<li><span class="katex-inline">$t_X$</span>가 <span class="katex-inline">$R_X e_3$</span>
+    (카메라 광축을 hand 좌표에서 본 방향) 을 따라 움직이는 <strong>1차원</strong>;</li>
+<li><span class="katex-inline">$R_X$</span>와 <span class="katex-inline">$Y$</span>는
+    <strong>영향받지 않는다</strong>.</li>
+</ul>
+<p>
+따라서 방사 제약만으로는 <span class="katex-inline">$(X, Y)$</span>의 12자유도 중
+<strong>정확히 11개</strong>가 결정된다. 뷰를 아무리 많이 모아도, 운동을 아무리 다양하게
+해도 나머지 하나는 결정되지 않는다.
+</p>
+</div>
+
+<h3>5.1 게이지 고정은 QCQP를 깨지 않는다</h3>
+
+<p>
+논문 Proposition 7은 <strong>유일한</strong> 최소점을 가정한다. 1차원 해 다양체가 있으면
+SDP 해가 rank-1이 아니게 되어 인증이 실패한다 (<span class="mono">sdp_rank_ratio</span> 검사).
+제약 하나로 고정한다.
+</p>
+
+$$h(x) \;:=\; (R_X e_3)^\top t_X - \gamma \;=\; 0. \tag{7}$$
+
+<div class="box">
+<span class="tag">따름정리 6</span>
+<p>
+(7)은 (i) <span class="katex-inline">$x$</span>에 대한 <strong>2차형식</strong>이고,
+(ii) 정리 4의 궤도에 <strong>횡단적</strong>이다. 따라서 QCQP 구조를 유지한 채 완전한 게이지
+고정이 된다.
+</p>
+</div>
+
+<div class="proof">
+<span class="tag">증명.</span>
+(i) 열 우선 <span class="katex-inline">$\mathrm{vec}(R_X)$</span>의 7&ndash;9번째 성분이
+<span class="katex-inline">$R_X e_3$</span>이므로
+<span class="katex-inline">$h = \sum_{k=1}^{3} x_{6+k}\, t_{X,k} - \gamma s^2$</span>,
+즉 동차 2차형식이다.
+(ii) 궤도 위에서
+<span class="katex-inline">$\frac{d}{d\delta} h = (R_X e_3)^\top (R_X e_3) = \|e_3\|^2 = 1 \neq 0$</span>이므로
+궤도와 제약면이 횡단적으로 만난다. <span class="qed">∎</span>
+</div>
+
+<div class="box key">
+<span class="tag">비고 7 (SDP를 다시 풀 필요가 없다)</span>
+<p>
+비용이 <span class="katex-inline">$\delta$</span>에 대해 <em>불변</em>이므로,
+<span class="katex-inline">$\gamma$</span>를 바꿔 다시 풀 필요가 없다.
+<strong>SDP 한 번이 전역 최적해의 1-파라미터 족
+<span class="katex-inline">$\{X T_z(\delta)\}_{\delta \in \mathbb{R}}$</span> 전체를 준다.</strong>
+§6의 탐색은 이 족 위에서만 이루어진다.
+</p>
+</div>
+
+<h3>5.2 수치 확인</h3>
+
+<p>
+시뮬레이션 세션(30뷰, 1674개 코너 관측, 1080p, 120° fisheye)에서 정리 4를 직접 확인한다.
+</p>
+
+<table>
+<caption>표 1. 카메라를 자기 광축을 따라 밀었을 때 방사 잔차의 최대 변화.
+잔차 자체의 rms는 <span class="mono">2.834e-03</span> rad.</caption>
+<thead><tr><th>이동</th><th>방향</th><th>잔차 최대 변화</th><th>판정</th></tr></thead>
+<tbody>
+<tr><td>1 mm</td><td>카메라 z</td><td>0.000e+00</td><td>불변</td></tr>
+<tr><td>10 mm</td><td>카메라 z</td><td>2.163e&minus;15</td><td>불변</td></tr>
+<tr><td>100 mm</td><td>카메라 z</td><td>0.000e+00</td><td>불변</td></tr>
+<tr><td>500 mm</td><td>카메라 z</td><td>2.163e&minus;15</td><td>불변</td></tr>
+<tr><td>100 mm</td><td>카메라 x</td><td>1.002e+00</td><td>관측됨</td></tr>
+<tr><td>100 mm</td><td>카메라 y</td><td>1.004e+00</td><td>관측됨</td></tr>
+</tbody>
+</table>
+
+<p>
+<strong>500 mm를 밀어도 기계정밀도로 변하지 않는다.</strong> 근사적 퇴화가 아니라 정확한 불변이다.
+같은 크기의 횡방향 이동은 잔차의 약 350배를 만든다.
+</p>
+
+<table>
+<caption>표 2. 12자유도 Jacobian의 조건수. 게이지 고정은 따름정리 5의 방향을 사영해 제거한 것.</caption>
+<thead><tr><th>잔차</th><th>내부 파라미터 필요?</th><th>자유도</th><th>조건수</th></tr></thead>
+<tbody>
+<tr><td>방사 (식 5)</td><td>아니오</td><td>12</td><td>519 426.6</td></tr>
+<tr><td>방사 (식 5)</td><td>아니오</td><td>11 (게이지 고정)</td><td><strong>226.6</strong></td></tr>
+<tr><td>전체 재투영</td><td>예</td><td>12</td><td>134.2</td></tr>
+</tbody>
+</table>
+
+<p>
+수치적 영벡터와 <span class="katex-inline">$R_X e_3$</span> 사이 각도는
+<span class="mono">0.010°</span>로, 따름정리 5를 확인한다.
+그리고 그 한 방향만 제거하면 조건수가 <strong>519 426 → 226.6</strong>으로 떨어져,
+내부 파라미터를 <em>사용하는</em> 전체 재투영 잔차의 134.2와 같은 급이 된다.
+즉 <strong>나쁜 것은 정확히 하나뿐이고, 나머지 11개는 잘 조건화되어 있다.</strong>
+</p>
+
+<h2 class="pagebreak">6. 잃은 자유도는 초점거리가 공급한다</h2>
+
+<p>
+따름정리 5의 자유도가 하필 <em>깊이 방향</em>이라는 것이 우연이 아니다.
+</p>
+
+<div class="box">
+<span class="tag">보조정리 8 (깊이–초점 결합)</span>
+<p>
+보드의 실제 크기가 알려져 있고 작업거리에 비해 작을 때
+(약시점, weak-perspective 극한), 초점거리를
+<span class="katex-inline">$f \mapsto (1+\varepsilon) f$</span>로 잘못 잡으면 PnP가 복원하는
+깊이는 1차 근사로
+</p>
+$$\|t_{\text{cb}}\| \;\longmapsto\; (1+\varepsilon)\,\|t_{\text{cb}}\|$$
+<p>
+로 스케일되고, 회전 <span class="katex-inline">$R_{\text{cb}}$</span>는 2차 이하로만 변한다.
+</p>
+</div>
+
+<div class="proof">
+<span class="tag">논증.</span>
+크기 <span class="katex-inline">$\ell$</span>의 물체가 거리
+<span class="katex-inline">$d$</span>에서 이루는 각은
+<span class="katex-inline">$\alpha \approx \ell/d$</span>이고, 상의 반경은
+<span class="katex-inline">$r \approx f\alpha = f\ell/d$</span>이다.
+<span class="katex-inline">$r$</span>과 <span class="katex-inline">$\ell$</span>은 관측/기지량이므로
+고정된다. <span class="katex-inline">$f$</span>가 <span class="katex-inline">$(1+\varepsilon)$</span>배가
+되면 <span class="katex-inline">$d$</span>도 <span class="katex-inline">$(1+\varepsilon)$</span>배가
+되어야 같은 <span class="katex-inline">$r$</span>을 낸다. 한편 자세의 회전은 투영된 패턴의
+<em>모양</em>(종횡비·기울기)이 결정하며, 이는 균일 스케일에 불변이다. <span class="qed">∎</span>
+</div>
+
+<p>
+따라서 초점거리 오차는 정리 4의 게이지 방향과 <strong>같은 1차원</strong>을 따라 작용한다.
+방사 제약이 볼 수 없는 자유도가 정확히 초점거리가 결정하는 자유도다.
+문제가 깔끔하게 분리된다는 뜻이다.
+</p>
+
+<h3>6.1 Stage B: 버렸던 정보 회수</h3>
+
+<p>
+§3에서 우리는 <span class="katex-inline">$\|\bar u\| = \rho(\vartheta)$</span>를 버렸다.
+Stage A가 11자유도를 확정한 뒤 그것을 되찾는다.
+Kannala-Brandt 모델
+</p>
+
+$$\rho(\vartheta) \;=\; f\big(\vartheta + k_1\vartheta^3 + k_2\vartheta^5 + k_3\vartheta^7 + k_4\vartheta^9\big)$$
+
+<p>
+은 계수 <span class="katex-inline">$\beta = (f,\, f k_1,\, \dots,\, f k_4)^\top$</span>에 대해
+<strong>선형</strong>이다. <span class="katex-inline">$\delta$</span>가 정해지면
+<span class="katex-inline">$\vartheta_{ij}(\delta)$</span>가 확정되므로
+</p>
+
+$$M(\delta)_{(ij),k} = \vartheta_{ij}(\delta)^{2k-1}, \qquad
+  \beta^\star(\delta) = \arg\min_\beta \big\| M(\delta)\beta - \varrho \big\|_2^2
+  = M(\delta)^{+} \varrho,$$
+
+<p>
+여기서 <span class="katex-inline">$\varrho_{ij} = \|\bar u_{ij}\|$</span>이다.
+이는 variable projection(분리형 최소자승)이며, 남는 것은
+</p>
+
+$$\min_{\delta \in \mathbb{R}} \; \Psi(\delta), \qquad
+  \Psi(\delta) := \big\| M(\delta) M(\delta)^{+}\varrho - \varrho \big\|_2^2 \tag{8}$$
+
+<p>
+&mdash; <strong>1차원 전역 문제</strong>다. 조밀 격자 + Newton 마무리로 풀리고,
+Lipschitz 구간 한계를 쓰면 전역 보장도 붙는다.
+</p>
+
+<table>
+<caption>표 3. 식 (8)의 1차원 비용. 안쪽 <span class="katex-inline">$\beta$</span> 적합은 닫힌 형식.
+참값은 <span class="katex-inline">$\delta = 0$</span>, <span class="katex-inline">$f = 916.73$</span> px.</caption>
+<thead><tr><th>δ [mm]</th><th>RMS [px]</th><th>복원된 f [px]</th></tr></thead>
+<tbody>
+<tr><td>&minus;150</td><td>7.1477</td><td>1166.12</td></tr>
+<tr><td>&minus;40</td><td>2.2406</td><td>983.83</td></tr>
+<tr><td>&minus;10</td><td>0.6350</td><td>934.13</td></tr>
+<tr><td>&minus;1</td><td><strong>0.3378</strong></td><td><strong>919.22</strong></td></tr>
+<tr><td>0</td><td>0.3434</td><td>917.57</td></tr>
+<tr><td>+10</td><td>0.7614</td><td>901.01</td></tr>
+<tr><td>+40</td><td>2.7079</td><td>851.36</td></tr>
+<tr><td>+150</td><td>12.4270</td><td>669.98</td></tr>
+</tbody>
+</table>
+
+<p>
+<span class="katex-inline">$\delta$</span>는 1 mm 이내로, 초점거리는 상대오차
+<span class="mono">+0.27 %</span>로 복원된다.
+<span class="katex-inline">$\pm150$</span> mm에서 RMS가 12 px까지 오르므로 평평한 방향이
+<em>아니다</em>. 다만 최소점 근처는 얕다(&minus;1 mm에서 0.3378, 0 mm에서 0.3434).
+이 얕음이 곧 고전적인 깊이&ndash;초점 모호성이며, 이 설계의 가치는 그것을 20차원 번들 조정
+안에 숨기는 대신 <strong>1차원의 명시적이고 전역 탐색 가능한 양으로 끄집어낸다</strong>는 데 있다.
+</p>
+
+<h2>7. 정확도: 내부 파라미터 오차가 X를 얼마나 움직이는가</h2>
+
+<p>
+이것은 §8의 최적성 질문과 <strong>다른 질문</strong>이다.
+</p>
+
+<div class="box">
+<span class="tag">보조정리 9 (데이터셋 수준의 등가 작용)</span>
+<p>
+보조정리 8에 따라 상대 초점오차 <span class="katex-inline">$\varepsilon$</span>는 모든 PnP
+깊이를 <span class="katex-inline">$(1+\varepsilon)$</span>배로 스케일하고 bearing 방향은
+건드리지 않는다. <span class="katex-inline">$B_i = T_{\text{cb},i}^{-1}$</span>이고 역변환은
+<span class="katex-inline">$t_{B} = -R_{\text{cb}}^\top t_{\text{cb}}$</span>이므로, 이는
+데이터셋 수준에서 <strong>모든 <span class="katex-inline">$B_i$</span>의 병진 성분을
+<span class="katex-inline">$(1+\varepsilon)$</span>배 하는 것과 정확히 같다.</strong>
+</p>
+</div>
+
+<p>
+이로부터 민감도를 선형화 없이 직접 잴 수 있다. 구현
+(<span class="mono">scripts/calibrate_rb5.jl</span> 의
+<span class="mono">intrinsic_sensitivity</span>)은
+<span class="katex-inline">$\pm\sigma_f$</span>에서 문제를 <em>다시 푼다</em>.
+</p>
+
+$$\Delta_t \;=\; \max_{\pm} \big\| t_X(\pm\sigma_f) - t_X(0) \big\|,
+  \qquad
+  \Delta_R \;=\; \max_{\pm} \angle\big(R_X(\pm\sigma_f),\, R_X(0)\big).$$
+
+<p>해석적 형태가 필요하면 (2)의 KKT를 음함수 미분한다.
+<span class="katex-inline">$L = x^\top Q x - \lambda^\top g(x)$</span>에 대해</p>
+
+$$\begin{bmatrix} H &amp; G^\top \\ G &amp; 0 \end{bmatrix}
+  \begin{bmatrix} \partial x / \partial\theta \\ \partial\lambda/\partial\theta \end{bmatrix}
+  = - \begin{bmatrix} \partial^2 L / \partial x\, \partial\theta \\ 0 \end{bmatrix},
+\qquad H = \nabla^2_{xx} L,\; G = \nabla g(\hat x),$$
+
+<p>
+이를 <span class="katex-inline">$\partial\theta/\partial K$</span>(PnP 정규방정식의 음함수 정리)와
+합성하면 <span class="katex-inline">$\partial X/\partial K$</span>를 얻고,
+<span class="katex-inline">$\Sigma_X \approx J \Sigma_K J^\top$</span>로 오차 막대가 나온다.
+<span class="katex-inline">$\Sigma_K$</span>는
+<span class="mono">intrinsics</span> 명령이 extrinsic을 주변화해 계산한다.
+</p>
+
+<table>
+<caption>표 4. 시뮬레이션에서 측정한 focal 오차의 영향(30자세, 작업거리 0.55 m).
+모든 행이 <span class="mono">numerically_certified = true</span>이다.</caption>
+<thead><tr><th>focal 오차</th><th>X 오차</th><th>normalized gap</th><th>검출기 RMS</th><th>AX&minus;YB 잔차</th></tr></thead>
+<tbody>
+<tr><td>0.0 %</td><td>0.14 mm</td><td>3.6e&minus;08</td><td>0.189 px</td><td>0.70 mm</td></tr>
+<tr><td>0.5 %</td><td>1.00 mm</td><td>6.3e&minus;09</td><td>0.198 px</td><td>0.82 mm</td></tr>
+<tr><td>1.0 %</td><td>2.01 mm</td><td>&minus;2.6e&minus;09</td><td>0.219 px</td><td>1.15 mm</td></tr>
+<tr><td>2.0 %</td><td>4.02 mm</td><td>1.4e&minus;10</td><td>0.277 px</td><td>1.97 mm</td></tr>
+<tr><td>5.0 %</td><td>9.54 mm</td><td>5.5e&minus;11</td><td>0.487 px</td><td>4.55 mm</td></tr>
+</tbody>
+</table>
+
+<div class="box warn">
+<span class="tag">읽는 법</span>
+<p>
+X 오차는 <span class="katex-inline">$\varepsilon$</span>에 <strong>선형</strong>이다
+(0.86 / 1.87 / 3.88 / 9.40 mm의 증가분). 크기는
+<span class="katex-inline">$\Delta_t = O(\varepsilon d)$</span>이며 상수는 자세 기하에 의존한다
+(이 세션에서는 약 <span class="katex-inline">$0.36\,\varepsilon d$</span>;
+<span class="mono">intrinsics</span>가 출력하는 <span class="katex-inline">$\varepsilon d$</span>는
+보수적인 어림값이다). 결정적인 것은 <strong>gap이 전부 <span class="mono">1e-8</span> 이하로
+닫혀 있고 재투영 오차가 5 %에서도 0.49 px에 머문다</strong>는 점이다.
+내부 파라미터 오차는 <span class="katex-inline">$B$</span>에 등방성 잡음이 아니라
+<em>계통 편향</em>으로 들어가므로, 목적함수는 여전히 정확히 최소화된다.
+</p>
+</div>
+
+<h2>8. 최적성: 인증 반경</h2>
+
+<p>
+반대 방향의 질문 &mdash; 내부 파라미터가 조금 틀려도 <em>인증 자체</em>는 유지되는가.
+</p>
+
+<p>
+<span class="katex-inline">$\hat K$</span>에서 쌍대 잉여
+<span class="katex-inline">$S(\hat\lambda) = Q(\hat\theta) - \sum_j \hat\lambda_j C_j \succeq 0$</span>를
+얻었다고 하자. <span class="katex-inline">$S(\hat\lambda)\hat x = 0$</span>이므로
+<span class="katex-inline">$\lambda_{\min}(S) = 0$</span>이고, 의미 있는 양은
+알려진 커널을 사영해 제거한 뒤의 <strong>스펙트럼 갭</strong>
+</p>
+
+$$\mu \;:=\; \lambda_{\min}\!\big(\Pi^\perp S(\hat\lambda)\, \Pi^\perp\big) \;&gt;\; 0$$
+
+<p>
+이다. Weyl 부등식에 의해 임의의 대칭 섭동
+<span class="katex-inline">$\Delta Q$</span>에 대해
+<span class="katex-inline">$\lambda_{\min}(\Pi^\perp(S+\Delta Q)\Pi^\perp) \ge \mu - \|\Delta Q\|_2$</span>이므로,
+</p>
+
+$$\|\Delta Q\|_2 \;\le\; L\,\|\Delta K\|, \quad L := \Big\| \frac{\partial Q}{\partial K} \Big\|
+\qquad\Longrightarrow\qquad
+\boxed{\;\tau_K \;=\; \mu / L\;} \tag{9}$$
+
+<p>
+&ldquo;<span class="katex-inline">$\|K - \hat K\| \le \tau_K$</span>인 모든
+<span class="katex-inline">$K$</span>에 대해 전역 최적&rdquo;이라는 형태의 진술을 얻는다.
+이는 논문 Proposition 7 / Cifuentes et al. Theorem 3.9의 <em>정성적</em> 이웃 진술을
+계산 가능한 반경으로 바꾼 것이다. <span class="katex-inline">$\theta = \mathrm{vec}(\{A_i, B_i\})$</span>이고
+<span class="katex-inline">$B_i(K)$</span>가 <span class="katex-inline">$K$</span>에 대해
+매끄러우므로(PnP 정규방정식에 음함수 정리),
+<span class="katex-inline">$\bar\theta$</span> 이웃의 tightness가
+<span class="katex-inline">$\hat K$</span> 이웃으로 당겨진다.
+</p>
+
+<div class="box warn">
+<span class="tag">엄밀성에 관한 주의</span>
+<p>
+(9)는 <em>스케치</em>이지 완결된 증명이 아니다. 섭동 후에도 상보성·rank-1 조건이 유지되는지는
+별도 논증이 필요하며, 엄밀한 형태는 Cifuentes et al. (2022) Thm 3.9에 있다.
+또한 현재 구현이 보고하는 <span class="mono">dual_slack_min_eigenvalue</span>는 커널을 포함한
+<span class="katex-inline">$\lambda_{\min}(S)$</span>이므로, (9)를 쓰려면 알려진 커널 방향을
+먼저 사영해 <span class="katex-inline">$\mu$</span>를 따로 계산해야 한다.
+</p>
+</div>
+
+<p>
+실용적 사용법: <span class="katex-inline">$\tau_K$</span>를
+<span class="mono">intrinsics</span>가 계산한 <span class="katex-inline">$\sigma_K$</span>와 비교해
+<span class="katex-inline">$\tau_K \gg 3\sigma_K$</span>이면 인증이 캘리브레이션 불확실성에
+견고하다고 말할 수 있다. 반대면 그렇게 말할 수 없다고 명시해야 한다.
+</p>
+
+<h2>9. 알고리즘과 보장 범위</h2>
+
+<pre>입력: 코너 픽셀 {u_ij}, 로봇 자세 {A_i}, 보드 점 {p_j}.  내부 파라미터 정보 없음.
+
+1. 주점 c 초기화 (이미지 중심 또는 개략 캘리브레이션)
+2. Stage A -- 방사 QCQP, 식 (6) 또는 §4.3의 모멘트 완화, 게이지 제약 (7) 포함
+     -> 논문의 SDP + 쌍대 인증서.  f 와 왜곡을 전혀 사용하지 않음
+     -> (R_X, R_Y, t_Y) 및 t_X 의 11 자유도가 인증된 전역 최적
+     -> 비고 7 에 의해 해 다양체 {X T_z(delta)} 전체를 한 번에 확보
+3. Stage B -- 식 (8) 의 1 차원 전역 탐색, 안쪽 beta 는 닫힌 형식
+     -> f, 왜곡, delta 확정 -> X 완성
+4. (선택) c 에 대한 2 차원 외부 루프.  내부가 전역 최적이므로 branch-and-bound 가능
+5. (선택) Stage C -- 전체 재투영 목적함수로 국소 번들 조정.  2~4 의 결과를 시드로</pre>
+
+<table>
+<caption>표 5. 자유도별 보장.</caption>
+<thead><tr><th>자유도</th><th>개수</th><th>보장</th></tr></thead>
+<tbody>
+<tr><td><span class="katex-inline">$R_X, R_Y, t_Y$</span> 및 <span class="katex-inline">$t_X$</span>의 횡방향</td><td>11</td><td>고정된 <span class="katex-inline">$c$</span>에 대해 <strong>인증된 전역 최적</strong></td></tr>
+<tr><td><span class="katex-inline">$f, k_1 \dots k_4$</span></td><td>5</td><td>고정된 <span class="katex-inline">$\delta$</span>에 대해 <strong>닫힌 형식 전역 최적</strong></td></tr>
+<tr><td><span class="katex-inline">$\delta$</span> (광축 방향)</td><td>1</td><td>1차원 탐색; Lipschitz 한계로 전역 보장 가능</td></tr>
+<tr><td><span class="katex-inline">$c$</span> (주점)</td><td>2</td><td>2차원 branch-and-bound로 전역 보장 가능</td></tr>
+</tbody>
+</table>
+
+<p>
+모든 자유도가 전역적이고, 비싼 부분은 <span class="katex-inline">$325 \times 325$</span> 이하의
+SDP에 머문다. 기존 joint intrinsic&ndash;extrinsic 방법(Evangelista et al. 2023 포함, 전부 국소
+번들 조정)보다 실질적으로 강한 주장이다.
+</p>
+
+<h3>9.1 한계</h3>
+
+<ul>
+<li><strong>통계적 비효율.</strong> Stage A는 점마다 잔차의 두 성분 중 하나를 버린다.
+  조건수 비교(표 2)상 기하학은 멀쩡하지만, 같은 데이터에서 전체 번들 조정보다 분산이 크다.
+  Stage C가 회수하되, 그 결과 자체는 인증되지 않는다.</li>
+<li><strong>주점 근처의 퇴화.</strong>
+  <span class="katex-inline">$\|\bar u\| \to 0$</span>이면
+  <span class="katex-inline">$w_{ij} \to 0$</span>이라 정보가 없다. 보드가 화면
+  <em>가장자리</em>를 덮어야 한다 &mdash; 왜곡 캘리브레이션에서 어차피 필요한 조건이다.</li>
+<li><strong>Tightness는 실증 문제.</strong> 논문 Prop. 7이 저잡음에서 보장하지만, 임계 잡음
+  수준은 이 목적함수에 대해 다시 측정해야 한다.</li>
+<li><strong>보조정리 8은 1차 근사.</strong> 보드가 작업거리에 비해 클 때(근접 촬영, 큰 기울기)
+  깊이 스케일링이 정확하지 않다. §7의 구현은 이를 <span class="katex-inline">$B$</span>에
+  <em>정확히</em> 적용하므로, 그 자체로는 근사의 영향을 받지 않는다.</li>
+<li><strong>모든 수치는 시뮬레이션이다.</strong> 실제 HERO13·캡처박스·RB5 통신은 아직 검증되지 않았다.</li>
+</ul>
+
+<h2>10. 다음 단계</h2>
+
+<ol>
+<li><strong>완료</strong> &mdash; 시뮬레이션 검증 경로(<span class="mono">simulate</span>),
+  샘플별 MLE 가중치, 솔버 견고성, §7의 민감도 보고.</li>
+<li><span class="katex-inline">$\tau_K$</span> 구현 (식 9).
+  <span class="mono">dual_slack_min_eigenvalue</span>의 커널 사영과
+  <span class="katex-inline">$\partial Q/\partial K$</span> 유한차분만 있으면 되므로 작다.
+  첫 결과물로 충분하다.</li>
+<li>Stage A 프로토타입: §4.3의 모멘트 완화를 먼저 구현해 참값 시뮬레이션에서 tightness와
+  게이지 고정 후 rank-1 회복을 확인.</li>
+<li>Stage B를 붙여 end-to-end 정확도를 전체 번들 조정과 비교.</li>
+<li><span class="katex-inline">$c$</span>에 대한 branch-and-bound로 전역 보장을 닫음.</li>
+</ol>
+
+<hr class="sep">
+
+<h2>참고문헌</h2>
+<ol class="refs">
+<li>Wise, Kaveti, Cheng, Wang, Singh, Kelly, Rosen, Giamou (2026).
+  <em>A Certifiably Correct Algorithm for Generalized Robot-World and Hand-Eye Calibration.</em>
+  IJRR. arXiv:2507.23045.</li>
+<li>Cifuentes, Agarwal, Parrilo, Thomas (2022).
+  <em>On the local stability of semidefinite relaxations.</em>
+  Mathematical Programming. &mdash; 위 논문 Thm 5의 출처이자 §8의 근거.</li>
+<li>Thirthala, Pollefeys (2005). <em>The radial trifocal tensor.</em> CVPR.
+  &mdash; 1D radial 카메라 모델.</li>
+<li>Camposeco, Sattler, Pollefeys; Larsson et al.
+  <em>Revisiting radial distortion absolute pose.</em> ICCV.
+  &mdash; 방사 제약 기반 minimal solver.</li>
+<li>Dümbgen, Holmes, Barfoot.
+  <em>Toward globally optimal state estimation using automatically tightened
+  semidefinite relaxations</em> (AutoTight / AutoTemplate).
+  &mdash; 식 (6)의 리프팅에 필요한 중복 제약을 자동 탐색.</li>
+<li>Fitzgibbon (2001). <em>Simultaneous linear estimation of multiple view geometry
+  and lens distortion.</em> CVPR. &mdash; division model.</li>
+<li>Kannala, Brandt (2006). <em>A generic camera model and calibration method for
+  conventional, wide-angle, and fish-eye lenses.</em> TPAMI.</li>
+<li>Evangelista et al. (2023). &mdash; 재투영 기반 generalized RWHEC, 국소 방법. 비교 대상.</li>
+<li>Yang, Carlone. <em>Certifiably optimal outlier-robust geometric perception.</em>
+  &mdash; 이상치 대응이 필요해질 때.</li>
+</ol>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  renderMathInElement(document.body, {
+    delimiters: [
+      { left: "$$", right: "$$", display: true },
+      { left: "$", right: "$", display: false }
+    ],
+    throwOnError: false
+  });
+  document.body.dataset.mathReady = "1";
+});
+</script>
+</body>
+</html>

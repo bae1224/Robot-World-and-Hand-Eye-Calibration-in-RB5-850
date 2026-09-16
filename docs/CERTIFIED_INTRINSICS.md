@@ -7,6 +7,13 @@
 수치는 전부 이 저장소의 `simulate` 경로에서 재현됩니다.
 검증 스크립트는 `experiments/radial_identifiability.py`입니다.
 
+정리와 증명을 갖춘 조판본: **[certified_intrinsics_derivation.pdf](certified_intrinsics_derivation.pdf)** (10쪽).
+원본은 같은 폴더의 `.html`이며, 다음으로 다시 생성합니다.
+
+```bash
+chrome --headless=new --no-pdf-header-footer --virtual-time-budget=25000 \n  --print-to-pdf=docs/certified_intrinsics_derivation.pdf \n  file://$PWD/docs/certified_intrinsics_derivation.html
+```
+
 ---
 
 ## 0. 왜 이 문제를 풀어야 하는가

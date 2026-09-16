@@ -17,7 +17,8 @@
 [검증 기록](docs/RB5_VALIDATION.md) · 하드웨어 없이 전체 경로를 돌리려면 `simulate` 명령을 쓰세요.
 
 내부 파라미터까지 인증 범위에 넣는 방법의 유도와 수치 근거는
-[CERTIFIED_INTRINSICS.md](docs/CERTIFIED_INTRINSICS.md)에 있습니다.
+[CERTIFIED_INTRINSICS.md](docs/CERTIFIED_INTRINSICS.md),
+정리·증명을 갖춘 조판본은 [certified_intrinsics_derivation.pdf](docs/certified_intrinsics_derivation.pdf)에 있습니다.
 
 ```bash
 # 기존 설치로 실행 가능: 추가 패키지/가상환경 불필요
