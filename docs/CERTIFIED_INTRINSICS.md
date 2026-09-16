@@ -11,7 +11,9 @@
 원본은 같은 폴더의 `.html`이며, 다음으로 다시 생성합니다.
 
 ```bash
-chrome --headless=new --no-pdf-header-footer --virtual-time-budget=25000 \n  --print-to-pdf=docs/certified_intrinsics_derivation.pdf \n  file://$PWD/docs/certified_intrinsics_derivation.html
+chrome --headless=new --no-pdf-header-footer --virtual-time-budget=25000 \
+  --print-to-pdf=docs/certified_intrinsics_derivation.pdf \
+  file://$PWD/docs/certified_intrinsics_derivation.html
 ```
 
 ---
@@ -115,14 +117,17 @@ s.t.       z_ij = (R_X w_ij)ᵀ [ R_Aiᵀ ( R_Y p_j + t_Y − t_Ai ) − t_X ]  
 추가 변수 z는 **무제약**이라 ACQ의 Jacobian rank 논증을 해치지 않습니다.
 
 **규모 문제와 해법.** z가 관측당 하나라 30뷰×70코너 = 2100개가 늘어납니다. 밀집
-SDP로는 불가능하지만, 희소성 패턴이 **화살촉(arrowhead)** 구조입니다. 19×19 코어
-블록에 크기 20짜리 clique 2100개가 붙는 형태이고 이는 **chordal**입니다. COSMO의
-chordal decomposition이 정확히 이 경우를 위한 기능입니다.
+SDP로는 불가능하지만, 희소성 패턴이 **화살촉(arrowhead)** 구조입니다. 각 z_ij가 자기
+등식 하나에만 나타나므로 25×25 코어 블록에 크기 26짜리 clique 2100개가 붙는 형태이고,
+이는 **chordal**입니다. COSMO의 chordal decomposition이 정확히 이 경우를 위한 기능입니다.
+(논문의 19×19는 병진을 Schur 보완으로 소거한 회전 전용 비용입니다. 리프팅한 radial
+문제에서는 t가 목적함수가 아니라 2차 등식 제약에 들어가므로 같은 소거를 할 수 없습니다.)
 
 **더 나은 대안 — order-2 moment relaxation.** lifting 대신 4차 다항식 최적화로 직접
-보면, 변수 19개에 대한 2차 moment matrix 크기는 C(21,2) = **210**입니다. SO(3) 제약의
-localizing matrix는 20×20. 210×210 SDP는 매우 가볍습니다. lifting(2120)보다 훨씬
-낫습니다. tightness는 실증 문제지만 redundant SO(3) 제약이 유리하게 작용합니다.
+보면, 목적함수가 동차이므로 moment matrix는 25개 변수의 2차 단항식으로 색인되어
+크기가 C(26,2) = **325**입니다. 2차 제약의 localizing matrix는 26×26.
+325×325 SDP는 매우 가볍고, lifting의 2125차원보다 훨씬 낫습니다.
+tightness는 실증 문제지만 redundant SO(3) 제약이 유리하게 작용합니다.
 
 ---
 
@@ -257,7 +262,7 @@ f의 0.27% 오차는 위 표 기준으로 X에서 약 0.5 mm에 해당합니다.
 | δ (1차원) | 조밀 탐색 + Newton. Lipschitz 구간 한계로 **전역 보장 가능** |
 | c (2차원) | branch-and-bound로 **전역 보장 가능**, 단 내부 SDP 재해가 필요 |
 
-즉 모든 자유도가 전역적이고, 비싼 부분은 19×19 급 SDP에 머뭅니다.
+즉 모든 자유도가 전역적이고, 비싼 부분은 325×325 이하의 SDP에 머뭅니다.
 기존 joint intrinsic+extrinsic 방법(전부 국소 BA)보다 훨씬 강한 주장입니다.
 
 **정직한 한계:**
