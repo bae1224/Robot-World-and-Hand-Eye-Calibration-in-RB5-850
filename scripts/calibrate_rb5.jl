@@ -176,6 +176,39 @@ function solve_calibration(A, B; kappa=125.0, translation_sigma_m=0.01, toleranc
     return X, Y, report, errors
 end
 
+"""
+    intrinsic_sensitivity(A, B, X, Y, sigma; kwargs...)
+
+Turn the focal length's 1-sigma uncertainty into millimetres and degrees of X.
+
+Two things are easy to confuse here, so they are kept apart deliberately:
+
+  * The optimality certificate says the returned X is the global minimiser of
+    the stated objective *for the measurements it was given*. It says nothing
+    about whether those measurements were formed with the right intrinsics.
+  * This function answers the other question: if the focal length is uncertain
+    by a relative sigma, how far can X move? That is an accuracy statement, and
+    it is the one an operator can act on.
+
+A relative focal error e scales every PnP depth by roughly (1+e), and leaves the
+bearings untouched. So it acts on the dataset as a scaling of the translation
+part of every B_i, which is applied here exactly rather than approximated, and
+the problem is re-solved at +sigma and -sigma. The residual and the certificate
+are unchanged by construction, which is precisely the point.
+"""
+function intrinsic_sensitivity(A, B, X, Y, sigma; kwargs...)
+    translation, rotation = 0.0, 0.0
+    for signed in (sigma, -sigma)
+        scaled = copy(B)
+        scaled[:, 1:3, 4] .*= (1 + signed)
+        moved_X, _, _, _ = solve_calibration(A, scaled; kwargs...)
+        translation = max(translation, norm(moved_X[1:3, 4] - X[1:3, 4]))
+        cosine = clamp((tr(moved_X[1:3, 1:3]' * X[1:3, 1:3]) - 1) / 2, -1, 1)
+        rotation = max(rotation, rad2deg(acos(cosine)))
+    end
+    return translation, rotation
+end
+
 function main(args)
     if length(args) < 3 || "--help" in args
         println("Usage: scripts/julia_rb5.sh scripts/calibrate_rb5.jl COMBINED_DIR OUTPUT_DIR eye_to_hand|eye_in_hand [kappa=125] [sigma_m=0.01]")
@@ -188,6 +221,7 @@ function main(args)
     target_type = "charuco"  # Compatibility with original board-only exports.
     reference_type = "none"
     hand_frame = "controller_tcp"
+    focal_sigma = 0.0
     if isfile(convention_file)
         convention = TOML.parsefile(convention_file)
         convention["mount"] == mount || error("Mount disagrees with the exported dataset")
@@ -196,6 +230,7 @@ function main(args)
         target_type in ("aruco", "charuco") || error("Unknown target type")
         reference_type = get(convention, "reference_type", "none")
         hand_frame = get(convention, "hand_frame", "controller_tcp")
+        focal_sigma = get(convention, "focal_relative_sigma", 0.0)
         hand_frame in ("controller_tcp", "urdf_tip") || error("Unknown robot hand frame")
         reference_type in ("none", "charuco") || error("Unknown reference type")
         if reference_type == "charuco"
@@ -224,6 +259,15 @@ function main(args)
     end
     X, Y, report, errors = solve_calibration(A, B; kappa=kappa, translation_sigma_m=sigma,
                                              weights=weights)
+    if focal_sigma > 0
+        moved_m, moved_deg = intrinsic_sensitivity(A, B, X, Y, focal_sigma;
+                                                   kappa=kappa, translation_sigma_m=sigma,
+                                                   weights=weights)
+        report["focal_relative_sigma"] = focal_sigma
+        report["x_translation_sensitivity_mm"] = moved_m * 1000
+        report["x_rotation_sensitivity_deg"] = moved_deg
+        report["sensitivity_note"] = "How far X moves when the focal length is wrong by one sigma. This is an accuracy bound and is independent of numerically_certified, which only states that X minimises the objective for the measurements as given."
+    end
     report["mount"] = mount
     report["target_type"] = target_type
     report["reference_type"] = reference_type
@@ -268,6 +312,12 @@ function main(args)
     println("Normalized gap: ", report["normalized_gap"])
     println("Residual RMS: ", report["translation_rms_m"] * 1000, " mm, ",
             report["rotation_rms_deg"], " degrees")
+    if haskey(report, "x_translation_sensitivity_mm")
+        println("Focal 1-sigma (", report["focal_relative_sigma"] * 100, "%) moves X by ",
+                round(report["x_translation_sensitivity_mm"], digits=3), " mm, ",
+                round(report["x_rotation_sensitivity_deg"], digits=4),
+                " degrees -- accuracy, not optimality")
+    end
     return 0
 end
 

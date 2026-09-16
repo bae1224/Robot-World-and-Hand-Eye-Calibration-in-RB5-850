@@ -302,7 +302,9 @@ def simulate(args):
         "schema_version": 3, "synthetic": True, "simulated_images": True, "units": "metres",
         "reference_frame": "camera",
         "created_utc": datetime.now(timezone.utc).isoformat(),
-        "config": config, "camera": assumed_camera.to_dict(),
+        "config": config,
+        "camera": {**assumed_camera.to_dict(),
+                   "focal_relative_sigma": args.focal_sigma},
         "true_camera": true_camera.to_dict(), "robot_pose": fk.metadata,
         "synchronization": "simulated; the robot is exactly stationary at each pose"})
     atomic_json(session / "ground_truth.json", {
@@ -449,6 +451,8 @@ def main():
     sim.add_argument("--noise-sigma", type=float, default=1.5)
     sim.add_argument("--focal-error", type=float, default=0.0,
                      help="Relative focal error of the assumed intrinsics, e.g. 0.01 for 1%%")
+    sim.add_argument("--focal-sigma", type=float, default=0.002,
+                     help="Declared 1-sigma focal uncertainty, as an intrinsics file carries")
     sim.add_argument("--principal-error-px", type=float, default=0.0)
     sim.add_argument("--distortion-error", type=float, default=0.0)
     sim.add_argument("--no-images", action="store_true", help="Do not write the rendered PNGs")

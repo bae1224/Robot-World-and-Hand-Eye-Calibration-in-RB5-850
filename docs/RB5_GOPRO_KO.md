@@ -140,6 +140,24 @@ bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/sim01/combined resul
 낙관적입니다. 추정값을 실제로 바꾸는 것은 샘플 간 **상대** 가중치이고, 그쪽은
 영향을 받지 않습니다.
 
+## 6.5 내부 파라미터 불확실성 → X의 오차 막대
+
+`intrinsics`가 기록한 `focal_relative_sigma`가 데이터셋에 실려 오면,
+`calibrate_rb5.jl`이 이를 밀리미터로 환산해 보고합니다.
+
+```
+Focal 1-sigma (0.2%) moves X by 0.532 mm, 0.0045 degrees -- accuracy, not optimality
+```
+
+focal 상대오차는 모든 PnP 깊이를 (1+e)배로 스케일하고 bearing은 건드리지 않으므로,
+데이터셋 차원에서는 모든 B의 병진 성분을 스케일하는 것과 정확히 같습니다.
+그래서 ±σ에서 두 번 다시 풀어 X가 얼마나 움직이는지 직접 잽니다.
+
+`numerically_certified`와 혼동하지 마세요. 인증서는 "주어진 측정값에 대해 이 X가
+전역 최소점인가"에 답하고, 이 숫자는 "측정값 자체가 틀렸을 때 답이 얼마나 움직이나"에
+답합니다. 자세한 구분과 내부 파라미터까지 인증 범위에 넣는 방법은
+[CERTIFIED_INTRINSICS.md](CERTIFIED_INTRINSICS.md)를 보세요.
+
 ## 7. 솔버 견고성
 
 COSMO의 기본 Ruiz 스케일링이 이 완화 문제의 일부 인스턴스에서 정체합니다.

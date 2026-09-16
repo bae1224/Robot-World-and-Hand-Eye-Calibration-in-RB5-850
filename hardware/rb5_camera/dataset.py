@@ -60,10 +60,17 @@ def export_csv(session, output=None):
         np.savetxt(output / "weights.csv", clamp_weights(weights), delimiter=",",
                    fmt="%.17g", header="kappa,tau", comments="")
     atomic_json(output / "metadata.json", {**metadata, "sample_count": len(A)})
+    # The 1-sigma focal uncertainty, when the intrinsics were calibrated here
+    # rather than handed over by an SDK. The solver turns it into millimetres of
+    # hand-eye error, which is the only form an operator can act on.
+    sigma = metadata.get("camera", {}).get("focal_relative_sigma")
+    sigma_line = (f"focal_relative_sigma = {float(sigma)!r}\n"
+                  if isinstance(sigma, (int, float)) and sigma > 0 else "")
     (output / "convention.toml").write_text(
         f'mount = "{metadata["config"]["mount"]}"\nunits = "metres"\n'
         f'target_type = "{target_type}"\n'
         f'reference_type = "{reference_type}"\n'
+        f'{sigma_line}'
         f'hand_frame = "{"urdf_tip" if metadata["config"].get("robot", {}).get("pose_source") == "urdf_fk" else "controller_tcp"}"\n'
         'columns = "qw,qx,qy,qz,tx,ty,tz"\n')
     return output
