@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import unittest
 import xml.etree.ElementTree as ET
 import numpy as np
-from hardware.rb5_realsense.kinematics import RB5Kinematics, URDFChain
-from hardware.rb5_realsense.devices import RobotReader
-from hardware.rb5_realsense.__main__ import require_layout
+from hardware.rb5_camera.kinematics import RB5Kinematics, URDFChain
+from hardware.rb5_camera.devices import RobotReader
+from hardware.rb5_camera.__main__ import require_layout
 
 CONFIG = json.loads(Path("hardware/rb5.example.json").read_text())
 

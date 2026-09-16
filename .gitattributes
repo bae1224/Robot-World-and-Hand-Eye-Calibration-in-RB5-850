@@ -1,0 +1,8 @@
+# Default: normalise text in the repository, check out with the platform's endings.
+* text=auto
+
+# Vendored / hashed artefacts must stay byte-exact on every OS, otherwise the
+# provenance SHA256 recorded in hardware/models/rainbow/provenance.json fails
+# on Windows checkouts (core.autocrlf=true rewrites LF to CRLF).
+*.urdf -text
+*.csv -text

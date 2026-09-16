@@ -25,49 +25,55 @@ function project_rotation(R)
     return U * Diagonal([1., 1., det(U * V')]) * V'
 end
 
-function solve_calibration(A, B; kappa=125.0, translation_sigma_m=0.01, tolerance=1e-6)
-    size(A) == size(B) || error("A and B must have the same number of paired poses")
-    n = size(A, 1)
-    n >= 8 || error("At least 8 poses required; collect 20–40 diverse poses")
-    all(isfinite, [kappa, translation_sigma_m, tolerance]) &&
-        min(kappa, translation_sigma_m, tolerance) > 0 || error("Weights/tolerance must be positive")
-    # The inverse in the original cost builder requires observable translations.
-    Qt = translation_cost(A, B, ones(n))
-    singular_values = svdvals(Qt[1:6, 1:6])
-    singular_values[end] > 1e-8 * singular_values[1] ||
-        error("Unobservable/ill-conditioned motion: rotate about multiple nonparallel axes")
-    cost, Q = transformation_robot_world_cost(A, B, fill(kappa, n),
-                                               fill(0.5 / translation_sigma_m^2, n))
-    cost = Matrix(Symmetric((cost + cost') / 2))
-    constraints, rhs = get_double_rotation_constraints(true, true, 3)
-    # Solving the primal relaxation of the same QCQP exposes equality duals and
-    # the lifted matrix, allowing independent feasibility and gap checks.
-    scale = max(opnorm(cost), 1.0)
-    model = Model(optimizer_with_attributes(COSMO.Optimizer,
-        "eps_abs" => 1e-9, "eps_rel" => 1e-9, "max_iter" => 100000,
-        "verbose" => false))
+# COSMO's default Ruiz scaling stalls on some well-posed instances of this
+# relaxation: it hits the iteration limit with a feasibility of 1e-4 and a dual
+# slack of -7e4, while the same problem solves to 1e-13 in 0.1 s with scaling
+# disabled or with a larger Anderson memory. Rather than pick one setting and
+# hope, try several and let the independent certificate below decide.
+function solver_configurations()
+    base = Pair{String, Any}["eps_abs" => 1e-9, "eps_rel" => 1e-9, "verbose" => false]
+    return [
+        ("scaled", vcat(base, Pair{String, Any}["max_iter" => 25000])),
+        ("unscaled", vcat(base, Pair{String, Any}["max_iter" => 25000, "scaling" => 0])),
+        ("anderson", vcat(base, Pair{String, Any}["max_iter" => 50000,
+            "accelerator" => COSMO.with_options(COSMO.AndersonAccelerator, mem = 20)])),
+        ("unscaled_loose", Pair{String, Any}["eps_abs" => 1e-7, "eps_rel" => 1e-7,
+            "verbose" => false, "max_iter" => 200000, "scaling" => 0]),
+    ]
+end
+
+function solve_relaxation(cost, constraints, rhs, scale, attributes)
+    model = Model(optimizer_with_attributes(COSMO.Optimizer, attributes...))
     @variable(model, Z[1:19, 1:19], PSD)
     eq = @constraint(model, [i=1:length(rhs)],
                      sum(constraints[i, j, k] * Z[j, k] for j=1:19, k=1:19) == rhs[i])
     @objective(model, Min, sum(cost[j, k] / scale * Z[j, k] for j=1:19, k=1:19))
     optimize!(model)
     status = termination_status(model)
-    status in (MOI.OPTIMAL, MOI.ALMOST_OPTIMAL) || error("SDP failed: $status")
-    has_values(model) && has_duals(model) || error("SDP did not return primal/dual solutions")
-    lifted = Matrix(Symmetric(value.(Z)))
+    (has_values(model) && has_duals(model)) || return (status, nothing, nothing)
+    return (status, Matrix(Symmetric(value.(Z))), dual.(eq) .* scale)
+end
+
+"""
+    certificate(...)
+
+Assess a candidate solution using only quantities recomputed here, never the
+solver's own claim of optimality. A rounded point that is feasible for the
+original QCQP and whose cost matches a valid dual lower bound *is* the
+certificate; whether the ADMM iteration happened to declare OPTIMAL is a
+separate question, and on stalled-but-usable runs the two disagree.
+"""
+function certificate(cost, Q, constraints, rhs, lifted, multipliers, tolerance)
     eig = eigen(Symmetric(lifted))
     v = eig.vectors[:, end]
-    abs(v[end]) > 1e-6 || error("Relaxation cannot be rounded; homogenizing coordinate is zero")
+    abs(v[end]) > 1e-6 || return nothing
     v /= v[end]
     Rx = project_rotation(reshape(v[1:9], 3, 3))
     Ry = project_rotation(reshape(v[10:18], 3, 3))
     r = [vec(Rx); vec(Ry); 1.0]
     t = -(Q[1:6, 1:6] \ (Q[1:6, 7:end] * r))
-    X = [Rx t[1:3]; 0 0 0 1]
-    Y = [Ry t[4:6]; 0 0 0 1]
     q = [t; r]
     primal_cost = dot(q, Q * q)
-    multipliers = dual.(eq) .* scale
     slack = cost - sum(multipliers[i] * constraints[i, :, :] for i=1:length(rhs))
     min_slack = eigmin(Symmetric(slack))
     dual_value = dot(multipliers, rhs)
@@ -80,9 +86,62 @@ function solve_calibration(A, B; kappa=125.0, translation_sigma_m=0.01, toleranc
     feasibility = maximum(abs(sum(constraints[i, :, :] .* lifted) - rhs[i])
                           for i=1:length(rhs))
     rank_ratio = max(0.0, eig.values[end-1]) / max(eig.values[end], eps())
-    certified = (status == MOI.OPTIMAL && -tolerance <= gap_normalized <= tolerance
+    certified = (-tolerance <= gap_normalized <= tolerance
                  && feasibility <= tolerance && eig.values[1] >= -tolerance
                  && rank_ratio <= tolerance)
+    X = [Rx t[1:3]; 0 0 0 1]
+    Y = [Ry t[4:6]; 0 0 0 1]
+    return (X=X, Y=Y, certified=certified, primal_cost=primal_cost, dual_value=dual_value,
+            lower_bound=lower_bound, gap=gap, gap_normalized=gap_normalized,
+            min_slack=min_slack, feasibility=feasibility, rank_ratio=rank_ratio,
+            lifted_min_eigenvalue=eig.values[1])
+end
+
+function solve_calibration(A, B; kappa=125.0, translation_sigma_m=0.01, tolerance=1e-6,
+                           weights=nothing)
+    size(A) == size(B) || error("A and B must have the same number of paired poses")
+    n = size(A, 1)
+    n >= 8 || error("At least 8 poses required; collect 20-40 diverse poses")
+    all(isfinite, [kappa, translation_sigma_m, tolerance]) &&
+        min(kappa, translation_sigma_m, tolerance) > 0 || error("Weights/tolerance must be positive")
+    # Per-sample precisions, when the acquisition measured them. The paper's MLE
+    # supports inhomogeneous kappa_i and sigma_i; constants are only a fallback.
+    kappas = weights === nothing ? fill(kappa, n) : weights.kappa
+    taus = weights === nothing ? fill(0.5 / translation_sigma_m^2, n) : weights.tau
+    length(kappas) == n && length(taus) == n || error("Per-sample weights must match the pose count")
+    all(isfinite, kappas) && all(isfinite, taus) && minimum(kappas) > 0 && minimum(taus) > 0 ||
+        error("Per-sample weights must be positive and finite")
+    # The inverse in the original cost builder requires observable translations.
+    Qt = translation_cost(A, B, ones(n))
+    singular_values = svdvals(Qt[1:6, 1:6])
+    singular_values[end] > 1e-8 * singular_values[1] ||
+        error("Unobservable/ill-conditioned motion: rotate about multiple nonparallel axes")
+    cost, Q = transformation_robot_world_cost(A, B, kappas, taus)
+    cost = Matrix(Symmetric((cost + cost') / 2))
+    constraints, rhs = get_double_rotation_constraints(true, true, 3)
+    # Solving the primal relaxation of the same QCQP exposes equality duals and
+    # the lifted matrix, allowing independent feasibility and gap checks.
+    scale = max(opnorm(cost), 1.0)
+    best, best_name, best_status, tried = nothing, "", "", String[]
+    for (name, attributes) in solver_configurations()
+        status, lifted, multipliers = solve_relaxation(cost, constraints, rhs, scale, attributes)
+        push!(tried, "$name:$status")
+        lifted === nothing && continue
+        candidate = certificate(cost, Q, constraints, rhs, lifted, multipliers, tolerance)
+        candidate === nothing && continue
+        if best === nothing || (candidate.certified && !best.certified) ||
+           (candidate.certified == best.certified &&
+            max(abs(candidate.gap_normalized), candidate.feasibility) <
+            max(abs(best.gap_normalized), best.feasibility))
+            best, best_name, best_status = candidate, name, string(status)
+        end
+        best.certified && break
+    end
+    if best === nothing
+        attempted = join(tried, ", ")
+        error("SDP produced no usable primal/dual solution. Tried: $attempted")
+    end
+    X, Y = best.X, best.Y
     errors = zeros(n, 2)
     for i=1:n
         left = A[i, :, :] * X
@@ -92,14 +151,25 @@ function solve_calibration(A, B; kappa=125.0, translation_sigma_m=0.01, toleranc
         errors[i, 2] = rad2deg(acos(cosine))
     end
     report = Dict(
-        "sample_count" => n, "solver" => "COSMO", "solver_status" => string(status),
-        "known_scale" => true, "kappa" => kappa, "translation_sigma_m" => translation_sigma_m,
-        "numerically_certified" => certified, "certificate_tolerance" => tolerance,
-        "certificate_note" => "Floating-point evidence for the specified objective, not an exact proof or an accuracy guarantee",
-        "primal_cost" => primal_cost, "dual_value" => dual_value,
-        "conservative_lower_bound" => lower_bound, "gap" => gap,
-        "normalized_gap" => gap_normalized, "dual_slack_min_eigenvalue" => min_slack,
-        "sdp_constraint_max_error" => feasibility, "sdp_rank_ratio" => rank_ratio,
+        "sample_count" => n, "solver" => "COSMO",
+        "solver_status" => best_status, "solver_configuration" => best_name,
+        "solver_attempts" => tried,
+        "known_scale" => true,
+        "weights_source" => weights === nothing ? "constant" : "per_sample_pnp_covariance",
+        "kappa" => kappa, "translation_sigma_m" => translation_sigma_m,
+        "kappa_effective_mean" => sum(kappas) / n, "tau_effective_mean" => sum(taus) / n,
+        # src/calibration/robot_world_costs.jl accumulates kappa*M'M without the
+        # factor of 1/2 that Equation (18b) carries, while the translation block
+        # receives tau = 0.5/sigma^2 and therefore does carry it. The rotation
+        # weight in the paper's notation is consequently twice the kappa passed in.
+        "kappa_in_paper_notation" => 2 * sum(kappas) / n,
+        "numerically_certified" => best.certified, "certificate_tolerance" => tolerance,
+        "certificate_note" => "Floating-point evidence for the specified objective, not an exact proof or an accuracy guarantee. Recomputed here from the rounded solution and the dual bound, independently of the solver's own termination status.",
+        "primal_cost" => best.primal_cost, "dual_value" => best.dual_value,
+        "conservative_lower_bound" => best.lower_bound, "gap" => best.gap,
+        "normalized_gap" => best.gap_normalized, "dual_slack_min_eigenvalue" => best.min_slack,
+        "sdp_constraint_max_error" => best.feasibility, "sdp_rank_ratio" => best.rank_ratio,
+        "lifted_min_eigenvalue" => best.lifted_min_eigenvalue,
         "translation_condition_number" => singular_values[1] / singular_values[end],
         "translation_rms_m" => sqrt(sum(abs2, errors[:, 1]) / n),
         "rotation_rms_deg" => sqrt(sum(abs2, errors[:, 2]) / n))
@@ -109,6 +179,7 @@ end
 function main(args)
     if length(args) < 3 || "--help" in args
         println("Usage: scripts/julia_rb5.sh scripts/calibrate_rb5.jl COMBINED_DIR OUTPUT_DIR eye_to_hand|eye_in_hand [kappa=125] [sigma_m=0.01]")
+        println("       weights.csv in COMBINED_DIR is used automatically; --constant-weights ignores it")
         return "--help" in args ? 0 : 1
     end
     folder, output, mount = args[1:3]
@@ -141,7 +212,18 @@ function main(args)
     end
     kappa = length(args) >= 4 ? parse(Float64, args[4]) : 125.0
     sigma = length(args) >= 5 ? parse(Float64, args[5]) : 0.01
-    X, Y, report, errors = solve_calibration(A, B; kappa=kappa, translation_sigma_m=sigma)
+    # Per-sample precisions, when the acquisition measured them. Passing kappa or
+    # sigma explicitly is taken as the operator overriding them.
+    weights = nothing
+    weights_file = joinpath(folder, "weights.csv")
+    if isfile(weights_file) && length(args) < 4 && !("--constant-weights" in args)
+        rows = readdlm(weights_file, ',', Float64; skipstart=1)
+        size(rows, 2) == 2 || error("weights.csv must have columns kappa,tau")
+        size(rows, 1) == size(A, 1) || error("weights.csv row count must match the pose count")
+        weights = (kappa=rows[:, 1], tau=rows[:, 2])
+    end
+    X, Y, report, errors = solve_calibration(A, B; kappa=kappa, translation_sigma_m=sigma,
+                                             weights=weights)
     report["mount"] = mount
     report["target_type"] = target_type
     report["reference_type"] = reference_type
@@ -181,6 +263,7 @@ function main(args)
         TOML.print(io, report)
     end
     println("Saved results: ", abspath(output))
+    println("Weights: ", report["weights_source"], "  solver: ", report["solver_configuration"])
     println("Numerically certified: ", report["numerically_certified"])
     println("Normalized gap: ", report["normalized_gap"])
     println("Residual RMS: ", report["translation_rms_m"] * 1000, " mm, ",

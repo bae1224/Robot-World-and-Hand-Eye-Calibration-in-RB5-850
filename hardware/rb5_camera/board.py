@@ -1,8 +1,14 @@
-"""ChArUco and ArUco metric RGB pose estimation (no depth required)."""
+"""ChArUco and ArUco metric RGB pose estimation (no depth required).
+
+Every pose is solved from *bearings* produced by ``optics.CameraModel``, so one
+code path serves a Brown-Conrady RealSense and an equidistant fisheye GoPro.
+Reprojection error is always reported in pixels of the original image.
+"""
 import base64
 from pathlib import Path
 import cv2
 import numpy as np
+from scipy.optimize import least_squares
 
 
 def get_dictionary(name):
@@ -54,10 +60,14 @@ def write_board(config, output):
     print(f"Print SVG at 100%: board {w:g} x {h:g} mm; measure each square afterwards.")
 
 
-def estimate_board(image, board, K, distortion, capture):
+def estimate_board(image, board, camera, capture):
     params = cv2.aruco.CharucoParameters()
-    params.cameraMatrix = K
-    params.distCoeffs = distortion
+    if camera.supports_opencv_charuco_refinement():
+        # CharucoDetector's camera-aware corner refinement assumes Brown-Conrady.
+        # Handing it equidistant coefficients would silently degrade the corners,
+        # so a fisheye detects without them and relies on subpixel refinement.
+        params.cameraMatrix = camera.K
+        params.distCoeffs = camera.distortion
     detector = cv2.aruco.CharucoDetector(board, params)
     corners, ids, _, _ = detector.detectBoard(image)
     if ids is None or len(ids) < capture["min_corners"]:
@@ -65,60 +75,105 @@ def estimate_board(image, board, K, distortion, capture):
     if board.checkCharucoCornersCollinear(ids):
         raise ValueError("ChArUco corners are collinear")
     objects, pixels = board.matchImagePoints(corners, ids)
-    T, quality = solve_planar_pose(objects, pixels, K, distortion, capture)
+    T, quality = solve_planar_pose(objects, pixels, camera, capture)
     return T, {**quality, "target_type": "charuco", "corner_count": len(ids),
                "corner_ids": ids.reshape(-1).tolist(),
                "corners_px": corners.reshape(-1, 2).tolist()}
 
 
-def solve_planar_pose(objects, pixels, K, distortion, capture, method=cv2.SOLVEPNP_IPPE):
-    # IPPE supplies both planar hypotheses; choose the positive-depth solution
-    # with lowest reprojection error, then refine using all matched corners.
+def pose_residuals(objects, pixels, camera, rvec, tvec):
+    return (camera.project(objects, rvec, tvec) - pixels.reshape(-1, 2)).ravel()
+
+
+def refine_pose_pixels(objects, pixels, camera, rvec, tvec):
+    """Levenberg-Marquardt on the *pixel* residual, for any distortion model.
+
+    OpenCV's solvePnPRefineLM only understands Brown-Conrady, and refining in
+    normalised coordinates instead would over-weight peripheral corners on a wide
+    lens - exactly where a GoPro puts most of the board. Detection noise lives in
+    pixels, so the refinement does too.
+
+    Also returns the Gauss-Newton covariance of [rotation vector; translation],
+    scaled by the observed residual variance. Downstream this becomes the
+    per-sample precision of the maximum likelihood objective.
+    """
+    objects = np.asarray(objects, dtype=np.float64).reshape(-1, 3)
+    pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 2)
+    x0 = np.r_[np.asarray(rvec, dtype=float).reshape(3),
+               np.asarray(tvec, dtype=float).reshape(3)]
+    result = least_squares(lambda x: pose_residuals(objects, pixels, camera, x[:3], x[3:]),
+                           x0, method="lm", xtol=1e-12, ftol=1e-12)
+    residual = result.fun
+    dof = max(residual.size - 6, 1)
+    variance = float(residual @ residual) / dof
+    try:
+        covariance = variance * np.linalg.inv(result.jac.T @ result.jac)
+    except np.linalg.LinAlgError:
+        covariance = None
+    return result.x[:3], result.x[3:], covariance
+
+
+def solve_planar_pose(objects, pixels, camera, capture, method=cv2.SOLVEPNP_IPPE):
+    """Planar PnP through undistorted bearings; quality always in image pixels.
+
+    IPPE supplies both planar hypotheses; choose the positive-depth solution with
+    lowest reprojection error, then refine using all matched corners.
+    """
+    objects = np.asarray(objects, dtype=np.float64).reshape(-1, 3)
+    pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 2)
+    bearings = camera.normalize(pixels)
+    unit, undistorted = np.eye(3), np.zeros(5)
+
+    def error(rvec, tvec):
+        return float(np.sqrt(np.mean(np.sum(
+            pose_residuals(objects, pixels, camera, rvec, tvec).reshape(-1, 2) ** 2, axis=1))))
+
+    def in_front(rvec, tvec):
+        R = cv2.Rodrigues(np.asarray(rvec, dtype=float).reshape(3, 1))[0]
+        return bool(np.all((objects @ R.T + np.asarray(tvec, dtype=float).reshape(3))[:, 2] > 0))
+
     found, rotations, translations, _ = cv2.solvePnPGeneric(
-        objects, pixels, K, distortion, flags=method)
+        objects, bearings, unit, undistorted, flags=method)
     candidates = []
     if found:
         for rvec, tvec in zip(rotations, translations):
-            R = cv2.Rodrigues(rvec)[0]
-            if np.all((objects.reshape(-1, 3) @ R.T + tvec.reshape(3))[:, 2] > 0):
-                projected = cv2.projectPoints(objects, rvec, tvec, K, distortion)[0]
-                error = float(np.sqrt(np.mean(np.sum(
-                    (projected.reshape(-1, 2) - pixels.reshape(-1, 2)) ** 2, axis=1))))
-                candidates.append((error, rvec, tvec))
+            if in_front(rvec, tvec):
+                candidates.append((error(rvec, tvec), rvec, tvec))
     # IPPE can be numerically singular at exactly frontal square orientations.
     # A planar iterative initialization supplies a fallback, subject to the same
     # positive-depth, ambiguity, and reprojection checks (never accept a bad fit).
     if not candidates or min(item[0] for item in candidates) > capture["max_reprojection_px"]:
-        ok, rvec, tvec = cv2.solvePnP(objects, pixels, K, distortion, flags=cv2.SOLVEPNP_ITERATIVE)
-        if ok:
-            R = cv2.Rodrigues(rvec)[0]
-            if np.all((objects.reshape(-1, 3) @ R.T + tvec.reshape(3))[:, 2] > 0):
-                projected = cv2.projectPoints(objects, rvec, tvec, K, distortion)[0]
-                error = float(np.sqrt(np.mean(np.sum(
-                    (projected.reshape(-1, 2) - pixels.reshape(-1, 2)) ** 2, axis=1))))
-                candidates.append((error, rvec, tvec))
+        ok, rvec, tvec = cv2.solvePnP(objects, bearings, unit, undistorted,
+                                      flags=cv2.SOLVEPNP_ITERATIVE)
+        if ok and in_front(rvec, tvec):
+            candidates.append((error(rvec, tvec), rvec, tvec))
     if not candidates:
         raise ValueError("No positive-depth board pose")
     candidates.sort(key=lambda item: item[0])
     if len(candidates) > 1:
-        first_R = cv2.Rodrigues(candidates[0][1])[0]
-        second_R = cv2.Rodrigues(candidates[1][1])[0]
+        first_R = cv2.Rodrigues(np.asarray(candidates[0][1], dtype=float).reshape(3, 1))[0]
+        second_R = cv2.Rodrigues(np.asarray(candidates[1][1], dtype=float).reshape(3, 1))[0]
         separation_deg = np.degrees(np.linalg.norm(cv2.Rodrigues(first_R.T @ second_R)[0]))
         if candidates[1][0] - candidates[0][0] < 0.1 and separation_deg > 5:
             raise ValueError("Ambiguous planar pose; tilt the board or improve image quality")
     _, rvec, tvec = candidates[0]
-    rvec, tvec = cv2.solvePnPRefineLM(objects, pixels, K, distortion, rvec, tvec)
-    projected = cv2.projectPoints(objects, rvec, tvec, K, distortion)[0]
-    error = float(np.sqrt(np.mean(np.sum(
-        (projected.reshape(-1, 2) - pixels.reshape(-1, 2)) ** 2, axis=1))))
+    rvec, tvec, covariance = refine_pose_pixels(objects, pixels, camera, rvec, tvec)
+    error_px = error(rvec, tvec)
     T = np.eye(4)
-    T[:3, :3], T[:3, 3] = cv2.Rodrigues(rvec)[0], tvec.reshape(3)
-    if (not np.isfinite(T).all() or not np.isfinite(error)
-            or error > capture["max_reprojection_px"]
-            or np.any((objects.reshape(-1, 3) @ T[:3, :3].T + T[:3, 3])[:, 2] <= 0)):
-        raise ValueError(f"Board reprojection/cheirality check failed ({error:.3f} px)")
-    return T, {"reprojection_rms_px": error,
-               "planar_hypothesis_errors_px": [item[0] for item in candidates]}
+    T[:3, :3], T[:3, 3] = cv2.Rodrigues(rvec.reshape(3, 1))[0], tvec.reshape(3)
+    if (not np.isfinite(T).all() or not np.isfinite(error_px)
+            or error_px > capture["max_reprojection_px"]
+            or np.any((objects @ T[:3, :3].T + T[:3, 3])[:, 2] <= 0)):
+        raise ValueError(f"Board reprojection/cheirality check failed ({error_px:.3f} px)")
+    quality = {"reprojection_rms_px": error_px,
+               "planar_hypothesis_errors_px": [float(item[0]) for item in candidates],
+               "point_count": int(objects.shape[0])}
+    if covariance is not None and np.isfinite(covariance).all():
+        quality["translation_sigma_m"] = float(np.sqrt(max(np.trace(covariance[3:, 3:]) / 3, 0)))
+        quality["rotation_sigma_deg"] = float(np.degrees(
+            np.sqrt(max(np.trace(covariance[:3, :3]) / 3, 0))))
+        quality["pose_covariance"] = covariance.tolist()
+    return T, quality
 
 
 class ArucoTarget:
@@ -139,7 +194,7 @@ class ArucoTarget:
         # x right, y up, z out of printed face (different from ChArUco frame).
         self.objects = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], dtype=np.float64)
 
-    def estimate(self, image, K, distortion, capture):
+    def estimate(self, image, camera, capture):
         corners, ids, _ = self.detector.detectMarkers(image)
         selected = [] if ids is None else np.flatnonzero(ids.reshape(-1) == self.marker_id)
         if len(selected) != 1:
@@ -149,8 +204,8 @@ class ArucoTarget:
         min_edge = float(np.min(np.linalg.norm(pixels - np.roll(pixels, 1, axis=0), axis=1)))
         if min_edge < self.min_edge_px:
             raise ValueError(f"ArUco marker too small in image: {min_edge:.1f} px")
-        T, quality = solve_planar_pose(self.objects, pixels, K, distortion, capture,
-                                      cv2.SOLVEPNP_IPPE_SQUARE)
+        T, quality = solve_planar_pose(self.objects, pixels, camera, capture,
+                                       cv2.SOLVEPNP_IPPE_SQUARE)
         return T, {**quality, "target_type": "aruco", "marker_id": self.marker_id,
                    "corner_count": 4, "corners_px": pixels.tolist(), "min_edge_px": min_edge}
 
@@ -188,19 +243,19 @@ def make_reference(config):
     return board
 
 
-def estimate_observations(image, target, reference, K, distortion, capture):
-    T_camera_target, target_quality = estimate_target(image, target, K, distortion, capture)
+def estimate_observations(image, target, reference, camera, capture):
+    T_camera_target, target_quality = estimate_target(image, target, camera, capture)
     if reference is None:
         return T_camera_target, None, {"target": target_quality}
-    T_camera_reference, reference_quality = estimate_board(image, reference, K, distortion, capture)
+    T_camera_reference, reference_quality = estimate_board(image, reference, camera, capture)
     return T_camera_target, T_camera_reference, {
         "target": target_quality, "reference": reference_quality}
 
 
-def estimate_target(image, target, K, distortion, capture):
+def estimate_target(image, target, camera, capture):
     if isinstance(target, ArucoTarget):
-        return target.estimate(image, K, distortion, capture)
-    return estimate_board(image, target, K, distortion, capture)
+        return target.estimate(image, camera, capture)
+    return estimate_board(image, target, camera, capture)
 
 
 def write_marker(config, output):

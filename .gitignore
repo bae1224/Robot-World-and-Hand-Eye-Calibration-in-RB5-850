@@ -5,3 +5,4 @@ __pycache__/
 data/rb5/
 results/rb5/
 hardware/rb5.local.json
+environments/rb5-portable/Manifest.toml

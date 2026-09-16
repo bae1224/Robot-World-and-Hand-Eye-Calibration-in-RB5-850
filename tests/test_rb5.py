@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import unittest
 import numpy as np
 from scipy.spatial.transform import Rotation
-from hardware.rb5_realsense.geometry import (
+from hardware.rb5_camera.geometry import (
     rb_pose_to_transform, inverse, measurement_pair, to_row, from_row)
-from hardware.rb5_realsense.dataset import atomic_json, export_csv
-from hardware.rb5_realsense.devices import RobotReader, require_stationary
+from hardware.rb5_camera.dataset import atomic_json, export_csv
+from hardware.rb5_camera.devices import RobotReader, require_stationary
 
 CONFIG = json.loads(Path("tests/fixtures/aruco_charuco_config.json").read_text())
 
@@ -125,9 +125,16 @@ class CaptureTests(unittest.TestCase):
             require_stationary(first, second, CONFIG["capture"])
 
 
+def pinhole_camera(width=1100, height=900, focal=1000.0):
+    """The plain projective camera the original RealSense-era tests assumed."""
+    from hardware.rb5_camera.optics import CameraModel
+    return CameraModel(np.array([[focal, 0, 550.], [0, focal, 450.], [0, 0, 1.]]),
+                       np.zeros(5), width, height, "pinhole")
+
+
 class BoardTests(unittest.TestCase):
     def test_existing_board_custom_dictionary_and_ids(self):
-        from hardware.rb5_realsense.board import make_board, make_reference
+        from hardware.rb5_camera.board import make_board, make_reference
         config = copy.deepcopy(CONFIG)
         config["board"].update(dictionary="DICT_6X6_250", marker_ids=list(range(20, 37)))
         board = make_reference(config)
@@ -143,59 +150,60 @@ class BoardTests(unittest.TestCase):
         import cv2
         if not hasattr(cv2.aruco, "CharucoDetector"):
             self.skipTest("Requires the specified OpenCV 4.11 installation")
-        from hardware.rb5_realsense.board import make_board, estimate_board
+        from hardware.rb5_camera.board import make_board, estimate_board
         board = make_board(CONFIG["board"])
         image = np.full((900, 1100), 255, dtype=np.uint8)
         image[100:800, 300:800] = board.generateImage((500, 700))
-        K = np.array([[1000., 0, 550], [0, 1000, 450], [0, 0, 1]])
-        T, quality = estimate_board(image, board, K, np.zeros(5), CONFIG["capture"])
+        camera = pinhole_camera()
+        T, quality = estimate_board(image, board, camera, CONFIG["capture"])
         # 150mm spans 500px at focal length 1000px => depth 300mm.
         self.assertAlmostEqual(T[2, 3], .3, delta=.002)
         self.assertLess(quality["reprojection_rms_px"], .3)
         self.assertGreater(quality["corner_count"], 15)
         with self.assertRaises(ValueError):
-            estimate_board(np.full_like(image, 255), board, K, np.zeros(5), CONFIG["capture"])
+            estimate_board(np.full_like(image, 255), board, camera, CONFIG["capture"])
 
     def test_single_aruco_pose_and_wrong_id(self):
         import cv2
-        from hardware.rb5_realsense.board import ArucoTarget
+        from hardware.rb5_camera.board import ArucoTarget
         target = ArucoTarget(CONFIG["target"])
-        K = np.array([[1000., 0, 550], [0, 1000, 450], [0, 0, 1]])
+        camera = pinhole_camera()
         R = Rotation.from_euler("xyz", [160, 10, 5], degrees=True).as_matrix()
         t = np.array([-.08, -.03, .4])
-        points = cv2.projectPoints(target.objects, cv2.Rodrigues(R)[0], t, K, np.zeros(5))[0]
+        points = cv2.projectPoints(target.objects, cv2.Rodrigues(R)[0], t,
+                                   camera.K, camera.distortion)[0]
         bitmap = cv2.aruco.generateImageMarker(target.dictionary, target.marker_id, 800)
         homography = cv2.getPerspectiveTransform(
             np.float32([[0, 0], [799, 0], [799, 799], [0, 799]]), points.reshape(4, 2).astype(np.float32))
         image = cv2.warpPerspective(bitmap, homography, (1100, 900), borderValue=255)
-        T, quality = target.estimate(image, K, np.zeros(5), CONFIG["capture"])
+        T, quality = target.estimate(image, camera, CONFIG["capture"])
         self.assertEqual(quality["corner_count"], 4)  # min_corners=8 applies only to ChArUco
         np.testing.assert_allclose(T[:3, 3], t, atol=.003)
         self.assertLess(np.degrees(Rotation.from_matrix(R.T @ T[:3, :3]).magnitude()), 3)
         wrong = ArucoTarget({**CONFIG["target"], "id": target.marker_id + 1})
         with self.assertRaises(ValueError):
-            wrong.estimate(image, K, np.zeros(5), CONFIG["capture"])
+            wrong.estimate(image, camera, CONFIG["capture"])
 
     def test_same_frame_reference_and_duplicate_markers(self):
         import cv2
-        from hardware.rb5_realsense.board import make_target, make_reference, estimate_observations
+        from hardware.rb5_camera.board import make_target, make_reference, estimate_observations
         target = make_target(CONFIG)
         reference = make_reference(CONFIG)
-        K = np.array([[1000., 0, 550], [0, 1000, 450], [0, 0, 1]])
+        camera = pinhole_camera()
         image = np.full((900, 1100), 255, dtype=np.uint8)
         image[100:800, 300:800] = reference.generateImage((500, 700))
         image[350:510, 100:260] = cv2.aruco.generateImageMarker(target.dictionary, target.marker_id, 160)
         marker_T, board_T, quality = estimate_observations(
-            image, target, reference, K, np.zeros(5), CONFIG["capture"])
+            image, target, reference, camera, CONFIG["capture"])
         self.assertAlmostEqual(marker_T[2, 3], .25, delta=.003)
         self.assertAlmostEqual(board_T[2, 3], .3, delta=.003)
         self.assertGreater(quality["reference"]["corner_count"], 15)
         image[100:800, 300:800] = 255
         with self.assertRaises(ValueError):
-            estimate_observations(image, target, reference, K, np.zeros(5), CONFIG["capture"])
+            estimate_observations(image, target, reference, camera, CONFIG["capture"])
         image[350:510, 850:1010] = cv2.aruco.generateImageMarker(target.dictionary, target.marker_id, 160)
         with self.assertRaises(ValueError):
-            target.estimate(image, K, np.zeros(5), CONFIG["capture"])
+            target.estimate(image, camera, CONFIG["capture"])
         duplicate_config = copy.deepcopy(CONFIG)
         duplicate_config["target"]["dictionary"] = "DICT_4X4_100"
         with self.assertRaises(ValueError):

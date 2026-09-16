@@ -35,4 +35,4 @@ bash scripts/julia_rb5.sh -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 python3 -m unittest discover -s tests -v
 bash scripts/julia_rb5.sh tests/rb5_solver.jl
 echo "Installed Python packages under the user site and Julia under ~/.local/share/rwhe."
-echo "Run: python3 -m hardware.rb5_realsense doctor"
+echo "Run: python3 -m hardware.rb5_camera doctor"

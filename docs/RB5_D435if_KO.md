@@ -85,8 +85,8 @@ bash scripts/install_rb5_local.sh
 실제 로봇을 이 자세로 이동시키는 명령이 아닙니다.
 
 ```bash
-python3 -m hardware.rb5_realsense fk --joints-deg 0 0 0 0 0 0
-python3 -m hardware.rb5_realsense fk --joints-deg 10 -20 30 0 45 -10 --output results/rb5/fk-example.json
+python3 -m hardware.rb5_camera fk --joints-deg 0 0 0 0 0 0
+python3 -m hardware.rb5_camera fk --joints-deg 10 -20 30 0 45 -10 --output results/rb5/fk-example.json
 ```
 
 공식 모델의 영각 결과는 위치 `[0, -0.2074, 1.0969] m`, 회전 I입니다.
@@ -115,8 +115,8 @@ FK 파일에는 입력 관절각, T_base_hand, URDF 경로/해시, base/tip, 관
 ## 6. 연결 확인과 수집
 
 ```bash
-python3 -m hardware.rb5_realsense --config hardware/rb5.local.json doctor --robot
-python3 -m hardware.rb5_realsense --config hardware/rb5.local.json collect --output data/rb5/session01
+python3 -m hardware.rb5_camera --config hardware/rb5.local.json doctor --robot
+python3 -m hardware.rb5_camera --config hardware/rb5.local.json collect --output data/rb5/session01
 ```
 
 수집기는 로봇 데이터 포트 5001을 읽습니다. 이동은 사용자가 티칭 펜던트로 수행합니다.
@@ -145,7 +145,7 @@ CSV는 헤더 없는 `qw,qx,qy,qz,tx,ty,tz`, 같은 행이 같은 샘플입니�
 중단 후에는 완성된 JSON 샘플을 새 출력 폴더로 복구할 수 있습니다.
 
 ```bash
-python3 -m hardware.rb5_realsense export data/rb5/session01 --output data/rb5/session01/recovered
+python3 -m hardware.rb5_camera export data/rb5/session01 --output data/rb5/session01/recovered
 ```
 
 ## 7. 논문 알고리즘 실행
@@ -170,7 +170,7 @@ bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined r
 ```bash
 python3 -m unittest discover -s tests -v
 bash scripts/julia_rb5.sh tests/rb5_solver.jl
-python3 -m hardware.rb5_realsense synthetic --output data/rb5/fk-demo
+python3 -m hardware.rb5_camera synthetic --output data/rb5/fk-demo
 bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/fk-demo/combined results/rb5/fk-demo eye_in_hand
 ```
 

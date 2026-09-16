@@ -1,7 +1,12 @@
-"""Only the RB data channel (port 5001) is used. No motion commands are sent."""
+"""Only the RB data channel (port 5001) is used. No motion commands are sent.
+
+Camera acquisition moved to cameras.py when the RealSense SDK stopped being the
+only way intrinsics could arrive; it is re-exported here for existing callers.
+"""
 import socket
 import time
 import numpy as np
+from .cameras import RealSenseCamera, UVCCamera, make_camera  # noqa: F401
 from .geometry import rb_pose_to_transform, pose_distance
 
 
@@ -59,53 +64,3 @@ def require_stationary(reference, current, config):
     if (distance > config["max_motion_m"] or angle > config["max_motion_deg"]
             or joint_delta > config["max_joint_motion_deg"]):
         raise ValueError("Robot moved during the stationary capture window")
-
-
-class ColorCamera:
-    def __init__(self, config):
-        import pyrealsense2 as rs
-        self.rs = rs
-        self.pipeline = rs.pipeline()
-        stream = rs.config()
-        if config["serial"]:
-            stream.enable_device(config["serial"])
-        elif len(rs.context().query_devices()) != 1:
-            raise ValueError("Connect one RealSense or select camera.serial explicitly")
-        stream.enable_stream(rs.stream.color, config["width"], config["height"],
-                             rs.format.bgr8, config["fps"])
-        profile = self.pipeline.start(stream)
-        try:
-            intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-            if intr.model not in (rs.distortion.none, rs.distortion.brown_conrady):
-                raise ValueError(f"Color distortion {intr.model} needs an explicit OpenCV "
-                                 "intrinsic calibration; not valid as Brown coefficients")
-            self.K = np.array([[intr.fx, 0, intr.ppx], [0, intr.fy, intr.ppy], [0, 0, 1.]])
-            self.distortion = np.array(intr.coeffs) if intr.model != rs.distortion.none else np.zeros(5)
-            device = profile.get_device()
-            self.metadata = {"name": device.get_info(rs.camera_info.name),
-                             "serial": device.get_info(rs.camera_info.serial_number),
-                             "firmware": device.get_info(rs.camera_info.firmware_version),
-                             "stream": "color_optical_frame", "K": self.K.tolist(),
-                             "distortion": self.distortion.tolist(),
-                             "distortion_model": str(intr.model),
-                             "width": intr.width, "height": intr.height}
-            self.last_frame = -1
-            for _ in range(30):
-                self.frame()
-        except BaseException:
-            self.pipeline.stop()
-            raise
-
-    def frame(self):
-        frame = self.pipeline.wait_for_frames(3000).get_color_frame()
-        if not frame or frame.get_frame_number() <= self.last_frame:
-            raise ValueError("Missing or stale RGB frame")
-        self.last_frame = frame.get_frame_number()
-        return np.asanyarray(frame.get_data()).copy(), {
-            "frame_number": self.last_frame,
-            "camera_timestamp_ms": frame.get_timestamp(),
-            "timestamp_domain": str(frame.get_frame_timestamp_domain()),
-            "received_monotonic_s": time.monotonic()}
-
-    def close(self):
-        self.pipeline.stop()

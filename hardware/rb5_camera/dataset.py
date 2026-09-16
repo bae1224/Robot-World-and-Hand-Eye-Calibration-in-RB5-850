@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import numpy as np
 from .geometry import measurement_pair, to_row
+from .weights import clamp_weights, sample_weights
 
 
 def atomic_json(path, value):
@@ -31,7 +32,7 @@ def export_csv(session, output=None):
         raise ValueError("Invalid target type")
     if reference_type == "charuco" and target_type != "aruco":
         raise ValueError("Fixed ChArUco reference requires an ArUco hand marker")
-    A, B, references = [], [], []
+    A, B, references, weights = [], [], [], []
     for path in records:
         sample = json.loads(path.read_text())
         camera_target = sample.get("T_camera_target", sample.get("T_camera_board"))
@@ -45,6 +46,7 @@ def export_csv(session, output=None):
             references.append(to_row(camera_reference))
         A.append(to_row(a))
         B.append(to_row(b))
+        weights.append(sample_weights(sample, camera_target))
     output = Path(output) if output else session / "combined"
     # Never mix old exports with a new acquisition: each export gets a new directory.
     output.mkdir(parents=True, exist_ok=False)
@@ -52,6 +54,11 @@ def export_csv(session, output=None):
     np.savetxt(output / "tag_0_cam_0_B.csv", B, delimiter=",", fmt="%.17g")
     if references:
         np.savetxt(output / "T_camera_charuco.csv", references, delimiter=",", fmt="%.17g")
+    # Per-sample precisions for the MLE. Written only when every sample carries a
+    # PnP covariance, since a partial set would silently mix two noise models.
+    if all(w is not None for w in weights):
+        np.savetxt(output / "weights.csv", clamp_weights(weights), delimiter=",",
+                   fmt="%.17g", header="kappa,tau", comments="")
     atomic_json(output / "metadata.json", {**metadata, "sample_count": len(A)})
     (output / "convention.toml").write_text(
         f'mount = "{metadata["config"]["mount"]}"\nunits = "metres"\n'

@@ -1,16 +1,24 @@
 # certifiable-rwhe-calibration
 
-## RB5-850 + RealSense D435if: Eye-in-Hand RWHE 캘리브레이션
+## RB5-850 Eye-in-Hand RWHE 캘리브레이션
 
 카메라는 로봇 손목에 장착하고, ChArUco 타겟은 로봇 베이스에 대해 고정합니다.
 기본·로컬 설정은 `mount=eye_in_hand`입니다.
 로봇 자세는 측정 관절각 `jnt_ang` + 공식 `rb5_850e.urdf`로 계산합니다.
 (U 버전 모델은 미포함. ArUco 마커를 사용하는 구성은 기본 경로에서 제외함)
-[한국어 실행 안내](docs/RB5_D435if_KO.md) · [검증 기록](docs/RB5_VALIDATION.md)
+
+카메라 백엔드는 두 가지입니다.
+
+| 백엔드 | 장비 | 설정 파일 | 문서 |
+|---|---|---|---|
+| `realsense` | Intel RealSense D435if (SDK가 내부 파라미터 제공) | `hardware/rb5.eye_in_hand.json` | [RB5_D435if_KO.md](docs/RB5_D435if_KO.md) |
+| `uvc` | GoPro HERO13 → HDMI 캡처박스 (내부 파라미터 직접 캘리브레이션) | `hardware/rb5.gopro.json` | [RB5_GOPRO_KO.md](docs/RB5_GOPRO_KO.md) |
+
+[검증 기록](docs/RB5_VALIDATION.md) · 하드웨어 없이 전체 경로를 돌리려면 `simulate` 명령을 쓰세요.
 
 ```bash
 # 기존 설치로 실행 가능: 추가 패키지/가상환경 불필요
-python3 -m hardware.rb5_realsense fk --joints-deg 0 0 0 0 0 0
+python3 -m hardware.rb5_camera fk --joints-deg 0 0 0 0 0 0
 ```
 
 `A X = Y B`로 손목-카메라와 베이스-타겟 변환을 동시에 추정합니다.
@@ -28,7 +36,7 @@ python3 -m hardware.rb5_realsense fk --joints-deg 0 0 0 0 0 0
 설정한 TCP가 같은 좌표계라고 가정하지 않습니다.
 
 ```bash
-python3 -m hardware.rb5_realsense --config hardware/rb5.local.json collect --output data/rb5/session01
+python3 -m hardware.rb5_camera --config hardware/rb5.local.json collect --output data/rb5/session01
 bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined results/rb5/session01 eye_in_hand
 ```
 
