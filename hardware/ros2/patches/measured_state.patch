@@ -1,0 +1,48 @@
+diff --git a/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp b/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp
+index 21c6f26..502920e 100644
+--- a/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp
++++ b/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp
+@@ -164,6 +164,11 @@ class RobotNode : public rclcpp::Node {
+   rb::podo::ResponseCollector res_storage_;
+   std::thread msg_thread_;
+ 
++  // Calibration uses measured jnt_ang without changing the control feedback path.
++  rclcpp::Publisher<rbpodo_msgs::msg::SystemState>::SharedPtr measured_state_publisher_;
++  rclcpp::TimerBase::SharedPtr measured_state_timer_;
++  float last_measured_state_time_ = -1.0f;
++
+   rclcpp::Publisher<rbpodo_msgs::msg::Response>::SharedPtr res_publisher_;
+ 
+   rclcpp::Service<rbpodo_msgs::srv::SetOperationMode>::SharedPtr set_operation_mode_srv_;
+diff --git a/rbpodo_hardware/src/robot_node.cpp b/rbpodo_hardware/src/robot_node.cpp
+index 91c7a32..3c8acb1 100644
+--- a/rbpodo_hardware/src/robot_node.cpp
++++ b/rbpodo_hardware/src/robot_node.cpp
+@@ -15,6 +15,7 @@
+ */
+ 
+ #include "rbpodo_hardware/robot_node.hpp"
++#include <cmath>
+ 
+ using namespace std;
+ using namespace rb;
+@@ -26,6 +27,19 @@ namespace rbpodo_hardware {
+ RobotNode::RobotNode(const rclcpp::NodeOptions& options, shared_ptr<Robot> robot)
+     : rclcpp::Node("rbpodo_hardware", options), robot_(robot), res_receiver_(robot_->ip()) {
+   res_publisher_ = this->create_publisher<rbpodo_msgs::msg::Response>("~/response", 10);
++  measured_state_publisher_ = create_publisher<rbpodo_msgs::msg::SystemState>(
++      "~/measured_state", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile());
++  measured_state_timer_ = create_wall_timer(20ms, [this]() {
++    const auto state = robot_->read_once();
++    const float stamp = state.sdata.time;
++    // Do not keep publishing cached feedback after the controller stops updating.
++    // Publish a clock reset so consumers can reject it and reconnect explicitly.
++    if (!std::isfinite(stamp) || stamp == last_measured_state_time_) {
++      return;
++    }
++    last_measured_state_time_ = stamp;
++    measured_state_publisher_->publish(convert_to_ros_msg(state));
++  });
+   //
+   run_ = true;
+   msg_thread_ = thread([this]() {

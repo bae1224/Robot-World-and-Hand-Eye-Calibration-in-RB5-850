@@ -25,17 +25,21 @@ class RobotReader:
         self.channel = rbpodo.CobotData(config["ip"], config["port"])
         self.last_controller_time = None
 
+    def validate_controller_time(self, state):
+        controller_time = float(state.time)
+        if not np.isfinite(controller_time) or (self.last_controller_time is not None
+                                                and controller_time <= self.last_controller_time):
+            raise ValueError("Stale RB data or controller clock reset; reconnect")
+        self.last_controller_time = controller_time
+        return controller_time
+
     def read(self):
         started = time.monotonic()
         packet = self.channel.request_data(self.timeout)
         if packet is None:
             raise TimeoutError("RB data channel timed out")
         state = packet.sdata
-        controller_time = float(state.time)
-        if not np.isfinite(controller_time) or (self.last_controller_time is not None
-                                                and controller_time <= self.last_controller_time):
-            raise ValueError("Stale RB data or controller clock reset; reconnect")
-        self.last_controller_time = controller_time
+        controller_time = self.validate_controller_time(state)
         if state.robot_state != 1:
             raise ValueError("Robot is not idle")
         if state.real_vs_simulation_mode != 0:

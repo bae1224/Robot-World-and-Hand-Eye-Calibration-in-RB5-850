@@ -1,0 +1,5 @@
+numpy==1.26.4
+scipy==1.15.3
+opencv-contrib-python==4.11.0.86
+# Live ROS 2 recording: source Humble and the patched rbpodo_ros2 workspace.
+# Optional direct backend (robot.transport=rbpodo): pip install rbpodo==0.16.14

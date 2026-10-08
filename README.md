@@ -1,44 +1,43 @@
 # certifiable-rwhe-calibration
 
-## RB5-850 + RealSense D435if: Eye-in-Hand RWHE 캘리브레이션
+## RB5-850 + GoPro HERO13 Black: Eye-in-Hand RWHE 캘리브레이션
 
-카메라는 로봇 손목에 장착하고, ChArUco 타겟은 로봇 베이스에 대해 고정합니다.
-기본·로컬 설정은 `mount=eye_in_hand`입니다.
-로봇 자세는 측정 관절각 `jnt_ang` + 공식 `rb5_850e.urdf`로 계산합니다.
-(U 버전 모델은 미포함. ArUco 마커를 사용하는 구성은 기본 경로에서 제외함)
-[한국어 실행 안내](docs/RB5_D435if_KO.md) · [검증 기록](docs/RB5_VALIDATION.md)
+GoPro를 로봇 손목에 장착하고 기존 ChArUco 보드는 고정합니다.
+GoPro로 저장한 **원본 사진 + 촬영 당시 RB5 상태 기록**을 연결하여 논문 솔버에 입력합니다.
+[ROS 2 설치·실행](docs/RB5_ROS2_KO.md) · [GoPro 실행 안내](docs/RB5_GOPRO13_KO.md) · [GoPro 설정](hardware/rb5.gopro.json)
+
+`/media/bae/Workspace/intrinsic`의 검증 PASS fisheye 결과(5568×4872, Wide)와 동일 보드 설정을 반영했습니다.
+로봇 pose의 기본 입력은 패치한 `rbpodo_ros2`의 **실측 관절각 `jnt_ang` + URDF 정기구학(FK)**입니다.
+`/rbpodo_hardware/measured_feedback`를 구독합니다. 공식 기본 joint_states의 `jnt_ref`는 사용하지 않습니다.
+역기구학(IK)으로 촬영 당시 자세를 알아내는 방식이 아닙니다.
+제어기의 활성 TCP 자세 `tcp_pos`를 직접 사용하는 옵션도 있습니다.
 
 ```bash
-# 기존 설치로 실행 가능: 추가 패키지/가상환경 불필요
-python3 -m hardware.rb5_realsense fk --joints-deg 0 0 0 0 0 0
+# ROS 2 안내에 따라 드라이버를 빌드·실행한 뒤, 모델/매핑과 보드 실측 정보를 설정
+source scripts/ros2_env.sh
+cp hardware/rb5.gopro.json hardware/rb5.local.json
+
+# 로봇을 정지시키고 READY 표시 후 10초 안에 GoPro로 수동 촬영
+/usr/bin/python3 -m hardware.rb5_gopro --config hardware/rb5.local.json record-pose \
+  --sample-id pose001 --duration 10 --output data/rb5/gopro_raw/robot/pose001.json
+
+# 여러 자세에서 반복 촬영한 뒤 사진 파일과 로봇 기록의 manifest 작성
+/usr/bin/python3 -m hardware.rb5_gopro --config hardware/rb5.local.json import \
+  --manifest data/rb5/gopro_raw/manifest.json --output data/rb5/gopro_session01
+
+bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl \
+  data/rb5/gopro_session01/combined results/rb5/gopro_session01 eye_in_hand
 ```
 
-`A X = Y B`로 손목-카메라와 베이스-타겟 변환을 동시에 추정합니다.
+Julia/RWHE 의존성 준비: `bash scripts/install_julia_rb5.sh`.
+GoPro Python 의존성: `hardware/requirements-gopro.txt`. 실시간 기록에는 ROS 2 드라이버가 필요하며,
+오프라인 사진 import에는 ROS·RealSense SDK·Python rbpodo가 필요하지 않습니다.
+`A=T_base_hand`, `B=inverse(T_camera_board)`로 `AX=YB`를 풀어 `X=T_hand_camera`, `Y=T_base_board`를 추정합니다.
 `T_parent_child`는 child 좌표를 parent 좌표로 옮기는 변환입니다.
+결과: `T_hand_camera.csv`, `T_base_board.csv`, `residuals.csv`, `report.toml`.
 
-| 항목 | 변환 | 입력/결과 |
-|---|---|---|
-| A | T_base_hand | 관절각 + URDF FK |
-| B | inverse(T_camera_board) | ChArUco PnP 결과의 역변환 |
-| X | T_hand_camera | 추정 결과 |
-| Y | T_base_board | 추정 결과 |
-
-`hardware/rb5.local.json`에 로봇 IP, 보유 ChArUco 사양·실측 크기를 입력하세요.
-실제 로봇에 맞는 URDF 버전·기준 링크·관절 매핑도 확인해야 합니다. URDF의 `tcp` 링크와 제어기에
-설정한 TCP가 같은 좌표계라고 가정하지 않습니다.
-
-```bash
-python3 -m hardware.rb5_realsense --config hardware/rb5.local.json collect --output data/rb5/session01
-bash scripts/julia_rb5.sh scripts/calibrate_rb5.jl data/rb5/session01/combined results/rb5/session01 eye_in_hand
-```
-
-결과 확인: `T_hand_camera.csv`, `T_base_board.csv`, `residuals.csv`, `report.toml`
-
-다른 노트북이나 pc 환경 에서 사용자 영역 설치:
-
-```bash
-bash scripts/install_rb5_local.sh
-```
+기존 RealSense 실시간 수집 경로도 유지합니다:
+[RealSense 실행 안내](docs/RB5_D435if_KO.md) · [기존 검증 기록](docs/RB5_VALIDATION.md).
 
 Certifiably globally optimal generalized robot-world and hand-eye calibration. Our algorithm is the first extrinsic calibration method that can jointly solve for the poses of multiple sensors *and* targets, consider an unknown target scale, and provide a computational certificate of global optimality for its maximum likelihood objective function. 
 

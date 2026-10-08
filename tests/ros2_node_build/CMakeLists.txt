@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.15)
+project(rwhe_ros2_node_compile_check LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(rbpodo_msgs REQUIRED)
+find_package(rbpodo REQUIRED)
+get_filename_component(RWHE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(RWHE_DRIVER "${RWHE_ROOT}/.runtime/ros2_ws/src/rbpodo_ros2/rbpodo_hardware")
+# Compile and link the patched node and Robot using the real SDK and generated messages.
+# This does not instantiate Robot or connect to a controller.
+add_library(rwhe_ros2_node_check SHARED "${RWHE_DRIVER}/src/robot_node.cpp" "${RWHE_DRIVER}/src/robot.cpp")
+target_include_directories(rwhe_ros2_node_check PRIVATE "${RWHE_DRIVER}/include")
+ament_target_dependencies(rwhe_ros2_node_check rclcpp rclcpp_action rbpodo_msgs)
+target_link_libraries(rwhe_ros2_node_check rbpodo::rbpodo)
+target_link_options(rwhe_ros2_node_check PRIVATE -Wl,--no-undefined)

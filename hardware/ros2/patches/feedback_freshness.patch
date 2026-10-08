@@ -1,0 +1,140 @@
+--- a/rbpodo_msgs/CMakeLists.txt
++++ b/rbpodo_msgs/CMakeLists.txt
+@@ -22,6 +22,7 @@
+   "msg/MovePbPoint.msg"
+   "msg/Response.msg"
+   "msg/SystemState.msg"
++  "msg/MeasuredFeedback.msg"
+   "srv/Eval.srv"
+   "srv/SetCartesianPoseControllerConfig.srv"
+   "srv/SetCartesianVelocityControllerConfig.srv"
+--- /dev/null
++++ b/rbpodo_msgs/msg/MeasuredFeedback.msg
+@@ -0,0 +1,6 @@
++# Local Linux host receive clock, NOT controller/exposure time.
++# New sequence only after a successful data-channel response. Never restamp cached data.
++string stream_id
++uint64 sequence
++uint64 received_monotonic_ns
++SystemState state
+--- a/rbpodo_hardware/include/rbpodo_hardware/robot.hpp
++++ b/rbpodo_hardware/include/rbpodo_hardware/robot.hpp
+@@ -145,6 +145,13 @@
+ 
+   rb::podo::SystemState read_once();
+ 
++  struct FeedbackSnapshot {
++    rb::podo::SystemState state;
++    uint64_t sequence;
++    uint64_t received_monotonic_ns;
++  };
++  FeedbackSnapshot read_feedback();
++
+   void wait_for_update();
+ 
+   void rc_error_check(bool print = true, bool clear = true);
+@@ -233,7 +240,8 @@
+   rb::podo::Cobot<rb::podo::StandardVector> cobot_;
+   rb::podo::CobotData cobot_data_;
+   rb::podo::ResponseCollector rc_;
+-  rb::podo::SystemState state_;
++  rb::podo::SystemState state_{};
++  uint64_t feedback_sequence_{0};
+   std::chrono::steady_clock::time_point state_updated_time_;
+   std::thread read_thread_;
+   std::atomic<bool> read_thread_stop_;
+--- a/rbpodo_hardware/src/robot.cpp
++++ b/rbpodo_hardware/src/robot.cpp
+@@ -62,6 +62,7 @@
+         scoped_lock ul(read_lock_);
+         state_ = s.value();
+         state_updated_time_ = chrono::steady_clock::now();
++        ++feedback_sequence_;
+         updated_ = true;
+       }
+       read_cv_.notify_all();
+@@ -245,6 +246,12 @@
+   return state_;
+ }
+ 
++Robot::FeedbackSnapshot Robot::read_feedback() {
++  scoped_lock sl(read_lock_);
++  return {state_, feedback_sequence_, static_cast<uint64_t>(
++      chrono::duration_cast<chrono::nanoseconds>(state_updated_time_.time_since_epoch()).count())};
++}
++
+ void Robot::wait_for_update() {
+   unique_lock ul(read_lock_);
+   updated_ = false;
+--- a/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp
++++ b/rbpodo_hardware/include/rbpodo_hardware/robot_node.hpp
+@@ -23,6 +23,7 @@
+ #include "rbpodo_msgs/action/move_pb.hpp"
+ #include "rbpodo_msgs/msg/response.hpp"
+ #include "rbpodo_msgs/msg/system_state.hpp"
++#include "rbpodo_msgs/msg/measured_feedback.hpp"
+ #include "rbpodo_msgs/srv/eval.hpp"
+ #include "rbpodo_msgs/srv/set_cartesian_pose_controller_config.hpp"
+ #include "rbpodo_msgs/srv/set_cartesian_velocity_controller_config.hpp"
+@@ -167,7 +168,9 @@
+   // Calibration uses measured jnt_ang without changing the control feedback path.
+   rclcpp::Publisher<rbpodo_msgs::msg::SystemState>::SharedPtr measured_state_publisher_;
+   rclcpp::TimerBase::SharedPtr measured_state_timer_;
+-  float last_measured_state_time_ = -1.0f;
++  rclcpp::Publisher<rbpodo_msgs::msg::MeasuredFeedback>::SharedPtr measured_feedback_publisher_;
++  uint64_t last_feedback_sequence_ = 0;
++  std::string feedback_stream_id_;
+ 
+   rclcpp::Publisher<rbpodo_msgs::msg::Response>::SharedPtr res_publisher_;
+ 
+--- a/rbpodo_hardware/src/robot_node.cpp
++++ b/rbpodo_hardware/src/robot_node.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "rbpodo_hardware/robot_node.hpp"
+ #include <cmath>
++#include <fstream>
+ 
+ using namespace std;
+ using namespace rb;
+@@ -29,16 +30,33 @@
+   res_publisher_ = this->create_publisher<rbpodo_msgs::msg::Response>("~/response", 10);
+   measured_state_publisher_ = create_publisher<rbpodo_msgs::msg::SystemState>(
+       "~/measured_state", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile());
++  measured_feedback_publisher_ = create_publisher<rbpodo_msgs::msg::MeasuredFeedback>(
++      "~/measured_feedback", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile());
++  // Linux boot ID allows readers to reject feedback from another host/boot.
++  std::ifstream boot_id_file("/proc/sys/kernel/random/boot_id");
++  std::string boot_id;
++  std::getline(boot_id_file, boot_id);
++  if (boot_id.empty()) { throw std::runtime_error("Cannot read Linux boot ID"); }
++  feedback_stream_id_ = boot_id + ":" + std::to_string(
++      std::chrono::steady_clock::now().time_since_epoch().count());
+   measured_state_timer_ = create_wall_timer(20ms, [this]() {
+-    const auto state = robot_->read_once();
+-    const float stamp = state.sdata.time;
+-    // Do not keep publishing cached feedback after the controller stops updating.
+-    // Publish a clock reset so consumers can reject it and reconnect explicitly.
+-    if (!std::isfinite(stamp) || stamp == last_measured_state_time_) {
++    const auto snapshot = robot_->read_feedback();
++    const auto now_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++    if (snapshot.sequence == last_feedback_sequence_ || snapshot.sequence == 0 ||
++        now_ns < snapshot.received_monotonic_ns ||
++        now_ns - snapshot.received_monotonic_ns > 100000000ULL) {
+       return;
+     }
+-    last_measured_state_time_ = stamp;
+-    measured_state_publisher_->publish(convert_to_ros_msg(state));
++    last_feedback_sequence_ = snapshot.sequence;
++    rbpodo_msgs::msg::MeasuredFeedback feedback;
++    feedback.stream_id = feedback_stream_id_;
++    feedback.sequence = snapshot.sequence;
++    feedback.received_monotonic_ns = snapshot.received_monotonic_ns;
++    feedback.state = convert_to_ros_msg(snapshot.state);
++    measured_feedback_publisher_->publish(feedback);
++    // Retain the original topic for inspection; calibration consumes the envelope.
++    measured_state_publisher_->publish(feedback.state);
+   });
+   //
+   run_ = true;

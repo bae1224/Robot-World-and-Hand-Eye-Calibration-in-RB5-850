@@ -1,0 +1,143 @@
+{
+  "mount": "eye_in_hand",
+  "robot": {
+    "ip": "",
+    "port": 5001,
+    "timeout_s": 2.0,
+    "tcp_description": "Enter the active pendant TCP name and offset before collecting",
+    "pose_source": "urdf_fk",
+    "kinematics": {
+      "urdf_path": "hardware/models/rainbow/rb5_850e.urdf",
+      "base_link": "link0",
+      "tip_link": "tcp",
+      "joint_names": [
+        "base",
+        "shoulder",
+        "elbow",
+        "wrist1",
+        "wrist2",
+        "wrist3"
+      ],
+      "joint_signs": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "joint_offsets_deg": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "model_matches_robot": true
+    },
+    "transport": "ros2",
+    "ros2": {
+      "state_topic": "/rbpodo_hardware/measured_feedback",
+      "max_feedback_age_s": 0.2
+    }
+  },
+  "camera": {
+    "type": "gopro_saved_images",
+    "intrinsics_path": "hardware/intrinsics/gopro13_photo_wide_fisheye.json",
+    "validation_path": "hardware/intrinsics/gopro13_photo_wide_validation.json"
+  },
+  "board": {
+    "squares_x": 14,
+    "squares_y": 9,
+    "square_length_m": 0.04,
+    "marker_length_m": 0.024,
+    "dictionary": "DICT_4X4_250",
+    "legacy_pattern": true,
+    "paper_width_mm": 600,
+    "paper_height_mm": 400,
+    "marker_ids": [
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112
+    ],
+    "dimensions_measured": true
+  },
+  "capture": {
+    "settle_s": 0.6,
+    "max_capture_s": 1.0,
+    "max_motion_m": 0.0005,
+    "max_motion_deg": 0.1,
+    "max_joint_motion_deg": 0.1,
+    "min_corners": 20,
+    "max_reprojection_px": 1.0,
+    "min_pose_translation_m": 0.01,
+    "min_pose_rotation_deg": 5.0
+  },
+  "target": {
+    "type": "charuco"
+  },
+  "reference": {
+    "type": "none"
+  }
+}
