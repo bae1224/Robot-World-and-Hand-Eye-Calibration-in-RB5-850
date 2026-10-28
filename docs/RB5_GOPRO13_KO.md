@@ -6,25 +6,52 @@ GoPro로 원본 JPG를 촬영하고 PC로 복사한 뒤, **촬영 당시 기록�
 
 ## 반영한 내부 파라미터
 
-`/media/bae/Workspace/intrinsic/output/fresh/calibration_fisheye_init1888/fisheye.json`을
-`hardware/intrinsics/gopro13_photo_wide_fisheye.json`에 원본 그대로 복사했습니다.
-별도 검증 보고서도 `gopro13_photo_wide_validation.json`으로 보존했습니다.
-보정 JSON의 `UNVALIDATED`는 fitting 시점 상태이며, 이후 생성된 보고서의 `PASS` 및 보정 파일 SHA256 일치를 확인합니다.
+**2026-10-27 재보정**을 기본 설정 `hardware/rb5.gopro.json`과 로컬 설정
+`hardware/rb5.local.json`에 반영했습니다. 원본 결과는
+`/media/bae/Workspace/intrinsic/output/2026-10-27/`이며, 실행에 필요한 파일은
+[`hardware/intrinsics/2026-10-27/`](../hardware/intrinsics/2026-10-27/README.md)에 저장소 내부 사본으로 보존했습니다.
+9월 보정 파일은 이전 세션의 재현용으로 유지하며 새 설정에서는 참조하지 않습니다.
 
-- 사진: `photo_single`, `wide`, zoom 1.0, standard JPG, **5568 × 4872**.
+- 보정: `hardware/intrinsics/2026-10-27/fisheye.json`.
+- 최종 테스트 보고서: `hardware/intrinsics/2026-10-27/validation.json`.
+- 사진: `photo_single`, `wide`, zoom 1.0, standard JPG, **5568 × 4872**, ISO 최소 100 / 최대 800.
+  실제 새 JPG EXIF는 ISO 769, 노출 0.008 s입니다. GPR RAW는 이번 보정 입력이 아닙니다.
 - 픽셀: EXIF 자동 회전을 적용하지 않은 원본 저장 픽셀.
-- K: `[[1742.110090393, 0, 2771.309741865], [0, 1741.460538459, 2441.211287230], [0, 0, 1]]`.
-- fisheye D (`k1,k2,k3,k4`): `[-0.015998363346, -0.011090556745, 0.003714728984, -0.003040692303]`.
-- 별도 검증: 13장, RMS 0.872481 px, PASS. 이는 픽셀 검증이며 로봇 외부 보정 정확도를 보증하지 않습니다.
+- K: `[[1739.196869508, 0, 2768.274058379], [0, 1738.945169363, 2441.155322200], [0, 0, 1]]`.
+- fisheye D (`k1,k2,k3,k4`): `[-0.001603877783, -0.049008094107, 0.040250943635, -0.014709468712]`.
+- 학습: 64장, RMS 0.553674 px. 최종 테스트: 별도로 보류한 16장, RMS 0.768199 px,
+  P95 1.263095 px, 기존 픽셀 기준 PASS.
+- 모델 비교용 다른 16장은 RMS 0.594142 px이지만 가장자리 오차·관측 수·격자 coverage에서 FAIL입니다.
+  해당 결과도 `model_selection.json`에 함께 보존했습니다.
 - 보드: 14 × 9 squares, square 0.040 m, marker 0.024 m, `DICT_4X4_250`, family IDs 50–112, legacy pattern.
 
-intrinsic 쪽의 sliced dictionary(offset=50)는 이 저장소에서 전체 dictionary와 명시적 `marker_ids`로 표현합니다.
-두 정의로 출력되는 보드 이미지가 동일한지 테스트합니다.
+보정 JSON의 `UNVALIDATED`는 fitting 시점 상태입니다. 로더는 이후 생성된 테스트 보고서의
+`PASS`와 보정 파일 SHA256 일치를 확인합니다. 이 PASS는 관측된 점의 픽셀 검증이며
+전체 원형 화각 또는 실제 로봇 외부 보정 정확도를 보증하지 않습니다.
 
-`GoProCamera`는 원본 사진에서 ChArUco를 검출하고, `fisheye.undistortPoints`로 IPPE 초기 자세를 구한 뒤
+intrinsic 쪽의 sliced dictionary(offset=50)는 실험 보드 설정에서 전체 dictionary와 명시적
+`marker_ids`로 표현합니다. 코드가 두 정의의 코너·마커 기하와 마커 코드를 비교하고,
+실제 검출에는 intrinsic과 동일한 sliced dictionary를 사용합니다.
+
+`GoProCamera`는 보정 파일의 `detection_settings`를 읽습니다.
+이번 값은 최소 마커 둘레 비율 0.008, adaptive threshold 최대 창 63 px이며,
+불완전한 보드에는 기본 검출기도 시도해 코너가 더 많은 패스를 채택합니다.
+검출 결과에 선택한 패스와 보드 면적을 기록합니다. 코너 ≥20개, 면적 ≥1% 기준을 유지합니다.
+
+원본 코너를 `fisheye.undistortPoints`로 정규화해 IPPE 초기 자세를 구한 뒤
 **원본 픽셀 좌표에서 fisheye 재투영 오차를 최소화**합니다.
 이 fisheye D를 일반 Brown 왜곡 계수로 `solvePnP`에 전달하면 안 됩니다.
 크기가 다른 이미지는 거부합니다. 같은 크기라도 크롭·렌즈 변경·보정 후 재저장한 사진은 사용하지 마세요.
+
+이번 모델은 광축에서 약 82.52°에서 방사방향 단조성을 잃으며, 실제 테스트 코너의 최대 각도는 약 75.68°입니다.
+새 설정의 `camera.max_ray_angle_deg=75.0`은 극주변 외삽을 피하기 위한 보수적인 사용 제한입니다.
+코너 하나라도 제한을 벗어나면 사진 전체를 거절하고 이유를 기록합니다.
+이 제한이 75° 안쪽 모든 방향의 정확도를 보증하지는 않습니다.
+설정한 각도까지 모델이 단조적인지 로드 시 검사하고, 역변환 후 원래 픽셀로 돌아오는지도 검사합니다.
+
+pose 채택 기준 `capture.max_reprojection_px=1.0`은 그대로입니다.
+따라서 intrinsic 테스트 전체가 PASS여도 개별 사진은 1px pose 기준이나 각도 제한으로 제외될 수 있습니다.
+세션에는 사용한 K/D·보고서·검출 설정·각도 제한·파일 해시를 보존합니다.
 
 ## 준비
 
@@ -102,7 +129,7 @@ bash /media/bae/Workspace/Calib/Robot-World-and-Hand-Eye-Calibration-in-RB5-850/
 스크립트가 프로젝트 이동과 ROS 환경 설정을 수행합니다.
 매 자세에서 로봇을 정지시킨 뒤 **Enter → READY에서 수동 촬영 → Saved 확인**을 반복하세요.
 `q` 또는 `Ctrl+C`로 종료합니다. 기존 파일의 가장 큰 번호 다음부터 자동으로 이어지며,
-중간에 삭제된 번호를 다시 사용하지 않습니다. 촬영 창은 기본 10초이고 자동 주기 저장은 하지 않습니다.
+중간에 삭제된 번호를 다시 사용하지 않습니다. 촬영 창은 기본 2초이고 자동 주기 저장은 하지 않습니다.
 기록 실패 후에는 원인을 해결하고 Enter로 다시 촬영하세요. 포즈 ID와 사진 파일명은 계속 메모합니다.
 
 단일 포즈를 직접 지정하려면 아래 기존 명령을 사용합니다.
@@ -193,7 +220,7 @@ CSV는 논문 구현의 기존 `qw,qx,qy,qz,tx,ty,tz` 순서이고 이동 단위
 입력 순서를 바꾼 짝맞춤, 기록 무결성·정지 검사 및 기존 Python 테스트를 검증합니다.
 실물 로봇 네트워크·관절 매핑·셔터 타이밍 및 최종 외부 보정 정확도는 실험에서 확인해야 합니다.
 
-이번 변경 검증에서 Python 테스트 23개가 통과했습니다. intrinsic 폴더의 검출 성공 검증 사진 13장을
+이전 9월 GoPro 통합 검증에서는 Python 테스트 23개가 통과했습니다. 당시 intrinsic 검증 사진 13장을
 새 GoPro 경로로 재처리한 결과, 현 기본 상한 1 px에서 9장이 통과하고 4장(GP010398–GP010401)이
 재투영 RMS 초과(약 1.025–1.346 px)로 제외됐습니다. 이 사진들은 intrinsic 검증용이며
 촬영 당시 RB5 pose가 연결된 RWHE 데이터로 취급하지 않았습니다.
@@ -206,3 +233,12 @@ CSV는 논문 구현의 기존 `qw,qx,qy,qz,tx,ty,tz` 순서이고 이동 단위
 X/Y 변환의 합성 정답 일치 및 `numerically_certified=true`를 확인했습니다.
 검증 산출물은 `.runtime/validation/julia-rwhe.KwqYs3/`에 있습니다.
 이는 실행 환경·솔버 검증이며 실제 GoPro/RB5 캘리브레이션 정확도 검증은 아닙니다.
+
+
+2026-10-27 intrinsic 반영 검증: Python 테스트 **34/34**가 통과했습니다.
+새 JPG 97장을 현재 GoPro 경로로 다시 처리하여 **모든 코너 ID와 좌표가 intrinsic 검출 결과와 정확히 일치**함을 확인했습니다.
+기존 개별 pose RMS 상한 1 px와 새 광축 각도 제한 75°를 적용하면 **88장 채택 / 9장 거절**입니다.
+거절 사유는 RMS 초과 7장, 각도 초과 1장(`GP010522`), 보드 면적 부족 1장(`GP010532`)입니다.
+자세한 사진별 결과는 [`integration_check.json`](../hardware/intrinsics/2026-10-27/integration_check.json)에 있습니다.
+이 97장은 로봇 상태가 짝지어진 RWHE 실측 데이터가 아니므로 실제 외부 보정을 실행한 결과로 해석하지 않습니다.
+합성 사진 → pose → sample_id 짝맞춤 → A/B CSV 경로는 테스트로 확인했습니다.

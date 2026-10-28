@@ -44,8 +44,9 @@
   },
   "camera": {
     "type": "gopro_saved_images",
-    "intrinsics_path": "hardware/intrinsics/gopro13_photo_wide_fisheye.json",
-    "validation_path": "hardware/intrinsics/gopro13_photo_wide_validation.json"
+    "intrinsics_path": "hardware/intrinsics/2026-10-27/fisheye.json",
+    "validation_path": "hardware/intrinsics/2026-10-27/validation.json",
+    "max_ray_angle_deg": 75.0
   },
   "board": {
     "squares_x": 14,

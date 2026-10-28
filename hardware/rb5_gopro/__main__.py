@@ -13,7 +13,7 @@ def main():
     record.add_argument('--duration', type=float, default=10, help='Stationary manual-shutter window in seconds')
     capture = commands.add_parser('capture', help='Press Enter for each photo; pose IDs advance automatically')
     capture.add_argument('--output', default='data/rb5/gopro_raw/robot', help='Robot record directory')
-    capture.add_argument('--duration', type=float, default=10, help='Manual-shutter window in seconds')
+    capture.add_argument('--duration', type=float, default=2, help='Manual-shutter window in seconds')
     importer = commands.add_parser('import', help='Process original GoPro photos paired by sample_id')
     importer.add_argument('--manifest', required=True)
     importer.add_argument('--output', required=True)

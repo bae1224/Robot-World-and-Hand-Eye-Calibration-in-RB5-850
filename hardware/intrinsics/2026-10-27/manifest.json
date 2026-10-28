@@ -1,0 +1,32 @@
+{
+  "source_directory": "/media/bae/Workspace/intrinsic/output/2026-10-27",
+  "calibration_sha256": "bd0beaf5a03afb0b4a1d77a25735cc2342b513c87f3f6e5d0313f210af6c2acb",
+  "artifacts": {
+    "fisheye.json": {
+      "sha256": "bd0beaf5a03afb0b4a1d77a25735cc2342b513c87f3f6e5d0313f210af6c2acb"
+    },
+    "validation.json": {
+      "sha256": "468d4966b9231909b9ecd7d0a4d520fb7602dd9886c9d6afed902997bdc223b6"
+    },
+    "model_selection.json": {
+      "sha256": "d1fef8a8cd80f509b0f3cd4967d59f6c6748be850875ef96050b86d7cc49aa57"
+    },
+    "model_domain.json": {
+      "sha256": "ef5f22d2195014a2a6b424edce716f0c456401f908c6a3d49da67802c4b31873"
+    },
+    "integration_check.json": {
+      "sha256": "b93d0e0d5b1578ce1845914b58dab16e764352b33fe0ed041c18dc5d66556a89"
+    }
+  },
+  "input": "Original 5568x4872 JPG; GPR RAW was not calibrated",
+  "split_counts": {
+    "train_accepted": 64,
+    "model_selection": 16,
+    "final_test": 16
+  },
+  "model_selection_status": "FAIL: edge count, edge RMS and grid coverage",
+  "final_test_status": "PASS: existing pixel thresholds",
+  "application_ray_limit_deg": 75.0,
+  "application_max_reprojection_px": 1.0,
+  "limitation": "Pixel validation and image integration only; measured robot-world/hand-eye accuracy is not yet validated."
+}

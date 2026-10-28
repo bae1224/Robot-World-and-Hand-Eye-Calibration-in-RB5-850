@@ -1,0 +1,45 @@
+{
+  "first_nonpositive_radial_derivative_theta_deg": 82.52025202520252,
+  "warning": "The fitted high-order polynomial is not globally invertible over the full nominal fisheye field. Pixel PASS applies to measured points. Do not extrapolate to the circular rim.",
+  "splits": {
+    "train": {
+      "max_observed_ray_theta_deg": 71.43137534431352,
+      "observed_pixel_bounds": [
+        [
+          796.38623046875,
+          696.5899658203125
+        ],
+        [
+          4755.12548828125,
+          4292.318359375
+        ]
+      ]
+    },
+    "validation": {
+      "max_observed_ray_theta_deg": 70.25601328756274,
+      "observed_pixel_bounds": [
+        [
+          1224.4715576171875,
+          1036.3172607421875
+        ],
+        [
+          4495.947265625,
+          4214.13427734375
+        ]
+      ]
+    },
+    "test": {
+      "max_observed_ray_theta_deg": 75.67511243358425,
+      "observed_pixel_bounds": [
+        [
+          772.9545288085938,
+          685.3031005859375
+        ],
+        [
+          4691.078125,
+          4498.03125
+        ]
+      ]
+    }
+  }
+}

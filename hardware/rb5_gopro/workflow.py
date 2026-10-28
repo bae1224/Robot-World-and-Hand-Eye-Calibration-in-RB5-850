@@ -287,6 +287,7 @@ def import_images(config, manifest, output):
         raise ValueError('Use a new session output directory')
     camera = GoProCamera(config['camera'])
     board = make_board(config['board'])
+    camera.check_board(board)
     fk = RB5Kinematics(config['robot']['kinematics']) if config['robot']['pose_source'] == 'urdf_fk' else None
     # Preflight all pairings and robot records before creating the session.
     pairs, digests = [], set()

@@ -46,12 +46,85 @@ class GoProCamera:
         digest = sha256(self.path)
         if validation.get('calibration_sha256') != digest or validation.get('quality_status') != 'PASS':
             raise ValueError('Intrinsic validation must PASS and match the calibration SHA256')
+        settings = c.get('detection_settings', {})
+        self.detection_settings = {
+            'min_marker_perimeter_rate': settings.get('min_marker_perimeter_rate', .03),
+            'adaptive_thresh_win_size_max': settings.get('adaptive_thresh_win_size_max', 23),
+            'fallback_default_detector': settings.get('fallback_default_detector', False),
+            'min_corners': settings.get('min_corners', 20),
+            'min_area_ratio': settings.get('min_area_ratio', .01),
+        }
+        rate = self.detection_settings['min_marker_perimeter_rate']
+        window = self.detection_settings['adaptive_thresh_win_size_max']
+        if (not np.isfinite(rate) or not 0 < rate < 1
+                or type(window) is not int or window < 3 or window % 2 == 0
+                or type(self.detection_settings['fallback_default_detector']) is not bool
+                or type(self.detection_settings['min_corners']) is not int
+                or self.detection_settings['min_corners'] < 4
+                or not 0 <= self.detection_settings['min_area_ratio'] < 1):
+            raise ValueError('Invalid calibrated ChArUco detection settings')
+        # Use the same sliced dictionary as intrinsic detection, even when the
+        # application board expresses the same pattern with family IDs 50..112.
+        spec = c['board']
+        family = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, spec['dictionary']))
+        dictionary = cv2.aruco.Dictionary(family.bytesList[spec['dictionary_offset']:].copy(),
+                                          family.markerSize, family.maxCorrectionBits)
+        self.board = cv2.aruco.CharucoBoard((spec['squares_x'], spec['squares_y']),
+                                           spec['square_length_m'], spec['marker_length_m'], dictionary)
+        self.board.setLegacyPattern(spec['legacy_pattern'])
+        params = cv2.aruco.DetectorParameters()
+        params.minMarkerPerimeterRate = rate
+        params.adaptiveThreshWinSizeMax = window
+        self.detector = cv2.aruco.CharucoDetector(self.board, detectorParams=params)
+        self.fallback = (cv2.aruco.CharucoDetector(self.board)
+                         if self.detection_settings['fallback_default_detector'] else None)
+        self.max_ray_angle_deg = config.get('max_ray_angle_deg')
+        self.max_distorted_radius = None
+        if self.max_ray_angle_deg is not None:
+            if not np.isfinite(self.max_ray_angle_deg) or not 0 < self.max_ray_angle_deg < 90:
+                raise ValueError('max_ray_angle_deg must be finite and between 0 and 90')
+            theta = np.deg2rad(self.max_ray_angle_deg)
+            # d(theta_d)/d(theta) is a polynomial in theta squared. Any real
+            # root in the allowed interval destroys strict invertibility there.
+            derivative = np.r_[1., self.D * np.array([3, 5, 7, 9])]
+            roots = np.polynomial.polynomial.polyroots(derivative)
+            if any(abs(z.imag) < 1e-9 and 0 < z.real <= theta**2 for z in roots):
+                raise ValueError('Fisheye model is not monotonic inside max_ray_angle_deg')
+            self.max_distorted_radius = theta * (1 + sum(
+                k * theta**(2*i+2) for i, k in enumerate(self.D)))
         self.metadata = {'name': 'GoPro HERO13 Black', 'model': 'fisheye',
                          'K': self.K.tolist(), 'D': self.D.tolist(), 'image_size': self.size,
                          'pixel_orientation': c['pixel_orientation'],
                          'camera_profile': c['camera_profile'], 'intrinsics_sha256': digest,
                          'validation_sha256': sha256(self.validation_path),
-                         'validation_rms_px': validation['overall']['rms_px']}
+                         'validation_rms_px': validation['overall']['rms_px'],
+                         'detection_settings': self.detection_settings,
+                         'max_ray_angle_deg': self.max_ray_angle_deg}
+
+    def check_board(self, board):
+        def same(a, b):
+            a, b = np.asarray(a), np.asarray(b)
+            return a.shape == b.shape and np.allclose(a, b, rtol=0, atol=1e-8)
+        codes = board.getDictionary().bytesList[board.getIds().ravel()]
+        expected_codes = self.board.getDictionary().bytesList[self.board.getIds().ravel()]
+        if (not same(board.getChessboardCorners(), self.board.getChessboardCorners())
+                or not same(board.getObjPoints(), self.board.getObjPoints())
+                or not np.array_equal(codes, expected_codes)):
+            raise ValueError('Experiment board does not match intrinsic calibration geometry/pattern')
+
+    def detect(self, image, board):
+        self.check_board(board)
+        if list(image.shape[1::-1]) != self.size:
+            raise ValueError(f'Expected original {self.size} pixels for ChArUco detection')
+        corners, ids, _, _ = self.detector.detectBoard(image)
+        count = 0 if ids is None else len(ids)
+        selected = 'configured'
+        if self.fallback is not None and count < len(self.board.getChessboardCorners()):
+            other_corners, other_ids, _, _ = self.fallback.detectBoard(image)
+            if other_ids is not None and len(other_ids) > count:
+                corners, ids = other_corners, other_ids
+                selected = 'opencv_default_fallback'
+        return corners, ids, selected
 
     def read(self, path):
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE | cv2.IMREAD_IGNORE_ORIENTATION)
@@ -67,9 +140,23 @@ class GoProCamera:
     def solve(self, objects, pixels, capture):
         objects = np.asarray(objects, dtype=np.float64).reshape(-1, 1, 3)
         pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 1, 2)
+        if not np.isfinite(pixels).all() or not np.isfinite(objects).all():
+            raise ValueError('Non-finite board observations')
+        # Limit use to the monotonic calibrated radial interval before inversion.
+        radii = np.linalg.norm((pixels.reshape(-1, 2) - self.K[:2, 2])
+                               / np.diag(self.K)[:2], axis=1)
+        if self.max_distorted_radius is not None and np.any(radii > self.max_distorted_radius):
+            raise ValueError(f'Board corners exceed calibrated ray limit {self.max_ray_angle_deg:g} deg')
         normalized = cv2.fisheye.undistortPoints(pixels, self.K, self.D)
         if not np.isfinite(normalized).all() or np.max(np.abs(normalized)) > 1e5:
             raise ValueError('Fisheye undistortion failed')
+        roundtrip = cv2.fisheye.distortPoints(normalized, self.K, self.D)
+        if np.max(np.linalg.norm(roundtrip - pixels, axis=2)) > 1e-3:
+            raise ValueError('Fisheye inverse does not reproduce the observed pixels')
+        max_ray = float(np.degrees(np.arctan(np.linalg.norm(
+            normalized.reshape(-1, 2), axis=1))).max())
+        if self.max_ray_angle_deg is not None and max_ray > self.max_ray_angle_deg + 1e-7:
+            raise ValueError(f'Board corners exceed calibrated ray limit {self.max_ray_angle_deg:g} deg')
         found, rotations, translations, _ = cv2.solvePnPGeneric(
             objects, normalized, np.eye(3), None, flags=cv2.SOLVEPNP_IPPE)
         candidates = []
@@ -101,18 +188,23 @@ class GoProCamera:
                 raise ValueError('Ambiguous planar pose; use a more tilted view')
         return T, {'reprojection_rms_px': error, 'distortion_model': 'fisheye',
                    'residual_pixel_frame': 'original_encoded_pixels',
+                   'max_observed_ray_angle_deg': max_ray,
                    'refined_hypothesis_errors_px': [item[0] for item in candidates]}
 
     def estimate(self, image, board, capture):
         # ChArUco's cameraMatrix/distCoeffs interface is Brown, not fisheye.
         # Match intrinsic calibration's local-homography detection on original pixels.
-        corners, ids, _, _ = cv2.aruco.CharucoDetector(board).detectBoard(image)
-        if ids is None or len(ids) < capture['min_corners']:
+        corners, ids, selected = self.detect(image, board)
+        if ids is None or len(ids) < max(capture['min_corners'], self.detection_settings['min_corners']):
             raise ValueError('Too few ChArUco corners')
         if board.checkCharucoCornersCollinear(ids):
             raise ValueError('ChArUco corners are collinear')
+        area = cv2.contourArea(cv2.convexHull(corners.reshape(-1, 2))) / (image.shape[0] * image.shape[1])
+        if area < self.detection_settings['min_area_ratio']:
+            raise ValueError('Board image area is below intrinsic detection minimum')
         objects, pixels = board.matchImagePoints(corners, ids)
         T, quality = self.solve(objects, pixels, capture)
         return T, {'target': {**quality, 'target_type': 'charuco', 'corner_count': len(ids),
+                             'selected_detector': selected, 'image_area_ratio': area,
                              'corner_ids': ids.ravel().tolist(),
                              'corners_px': corners.reshape(-1, 2).tolist()}}

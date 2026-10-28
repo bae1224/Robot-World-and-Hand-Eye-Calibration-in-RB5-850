@@ -14,7 +14,7 @@ def next_sample_id(directory):
     return f'pose{max(numbers, default=0) + 1:03d}'
 
 
-def capture_poses(config, directory, duration=10):
+def capture_poses(config, directory, duration=2):
     require_robot_config(config)
     if not np.isfinite(duration) or duration <= 0:
         raise ValueError('Duration must be positive finite seconds')

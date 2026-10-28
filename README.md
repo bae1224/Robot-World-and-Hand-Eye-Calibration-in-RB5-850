@@ -6,7 +6,10 @@ GoPro를 로봇 손목에 장착하고 기존 ChArUco 보드는 고정합니다.
 GoPro로 저장한 **원본 사진 + 촬영 당시 RB5 상태 기록**을 연결하여 논문 솔버에 입력합니다.
 [ROS 2 설치·실행](docs/RB5_ROS2_KO.md) · [GoPro 실행 안내](docs/RB5_GOPRO13_KO.md) · [GoPro 설정](hardware/rb5.gopro.json)
 
-`/media/bae/Workspace/intrinsic`의 검증 PASS fisheye 결과(5568×4872, Wide)와 동일 보드 설정을 반영했습니다.
+2026-10-27 재보정한 fisheye 결과(5568×4872 JPG, Wide, ISO 100–800)를 기본/로컬 GoPro 설정에 반영했습니다.
+최종 테스트 16장 RMS는 0.768 px입니다. 보정과 동일한 작은 마커 검출 설정을 사용하고,
+극주변 외삽을 피하기 위해 광축 75° 밖의 코너를 거절합니다.
+[보정 파일·검증 범위](hardware/intrinsics/2026-10-27/README.md)를 확인하세요.
 로봇 pose의 기본 입력은 패치한 `rbpodo_ros2`의 **실측 관절각 `jnt_ang` + URDF 정기구학(FK)**입니다.
 `/rbpodo_hardware/measured_feedback`를 구독합니다. 공식 기본 joint_states의 `jnt_ref`는 사용하지 않습니다.
 역기구학(IK)으로 촬영 당시 자세를 알아내는 방식이 아닙니다.

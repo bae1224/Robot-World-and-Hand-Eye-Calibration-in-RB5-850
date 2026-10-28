@@ -51,7 +51,11 @@ class GoProTests(unittest.TestCase):
     def test_calibration_hash_and_board_codes(self):
         camera = GoProCamera(CONFIG['camera'])
         self.assertEqual(camera.size, [5568, 4872])
-        self.assertAlmostEqual(camera.metadata['validation_rms_px'], .8724809809368699)
+        self.assertAlmostEqual(camera.metadata['validation_rms_px'], .7681991381676434)
+        self.assertEqual(camera.calibration['camera_profile']['iso_max'], 800)
+        self.assertEqual(camera.detection_settings['min_marker_perimeter_rate'], .008)
+        self.assertTrue(camera.detection_settings['fallback_default_detector'])
+        self.assertEqual(camera.max_ray_angle_deg, 75.)
         board = make_board(CONFIG['board'])
         spec = camera.calibration['board']
         family = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
@@ -60,6 +64,44 @@ class GoProTests(unittest.TestCase):
         original = cv2.aruco.CharucoBoard((14, 9), .04, .024, sliced)
         original.setLegacyPattern(True)
         np.testing.assert_array_equal(board.generateImage((1400, 900)), original.generateImage((1400, 900)))
+
+    def test_small_board_detection_and_default_fallback(self):
+        camera = GoProCamera(CONFIG['camera'])
+        board = make_board(CONFIG['board'])
+        image = np.full((4872, 5568), 180, np.uint8)
+        image[2100:2550, 2300:3000] = board.generateImage((700, 450))
+        _, default_ids, _, _ = cv2.aruco.CharucoDetector(camera.board).detectBoard(image)
+        self.assertTrue(default_ids is None or len(default_ids) < 104)
+        corners, ids, selected = camera.detect(image, board)
+        self.assertEqual(len(ids), 104)
+        self.assertEqual(selected, 'configured')
+        image.fill(180)
+        image[1900:2800, 2000:3400] = board.generateImage((1400, 900))
+        class MissingDetector:
+            def detectBoard(self, image):
+                return None, None, (), None
+        camera.detector = MissingDetector()
+        _, ids, selected = camera.detect(image, board)
+        self.assertEqual(len(ids), 104)
+        self.assertEqual(selected, 'opencv_default_fallback')
+
+    def test_calibration_board_and_ray_domain_are_enforced(self):
+        camera = GoProCamera(CONFIG['camera'])
+        wrong = copy.deepcopy(CONFIG['board'])
+        wrong['square_length_m'] = .041
+        with self.assertRaisesRegex(ValueError, 'geometry/pattern'):
+            camera.check_board(make_board(wrong))
+        wrong = copy.deepcopy(CONFIG['board'])
+        wrong['marker_ids'] = list(range(63))
+        with self.assertRaisesRegex(ValueError, 'geometry/pattern'):
+            camera.check_board(make_board(wrong))
+        points = np.tile([[[np.tan(np.deg2rad(76.)), 0.]]], (4, 1, 1))
+        pixels = cv2.fisheye.distortPoints(points, camera.K, camera.D)
+        objects = camera.board.getChessboardCorners()[:4]
+        with self.assertRaisesRegex(ValueError, 'ray limit'):
+            camera.solve(objects, pixels, CONFIG['capture'])
+        with self.assertRaisesRegex(ValueError, 'not monotonic'):
+            GoProCamera({**CONFIG['camera'], 'max_ray_angle_deg': 85.})
 
     def test_fisheye_metric_pose_at_center_and_edge(self):
         camera = GoProCamera(CONFIG['camera'])
@@ -220,6 +262,10 @@ class GoProTests(unittest.TestCase):
                 np.testing.assert_allclose(from_row(b), expected_a, atol=.006)
             self.assertEqual(json.loads((output/'sample_ids.json').read_text()), ['p2', 'p1', 'p0'])
             self.assertIn('mount = "eye_in_hand"', (output/'convention.toml').read_text())
+            session = json.loads((output.parent/'session.json').read_text())
+            self.assertEqual(session['camera']['detection_settings']['min_marker_perimeter_rate'], .008)
+            self.assertEqual(session['camera']['max_ray_angle_deg'], 75.)
+            self.assertEqual(sha256(output.parent/'intrinsics.json'), sha256(intrinsic_path))
             with self.assertRaisesRegex(ValueError, 'new session'):
                 import_images(config, manifest, folder/'session')
             write_json(manifest, {'samples': [entries[0], entries[0]]})
